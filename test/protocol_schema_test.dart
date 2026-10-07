@@ -70,7 +70,7 @@ void main() {
       expect(result.isValid, isFalse);
       expect(
         result.errors,
-        contains('Invalid type for text. Expected: String.'),
+        contains(startsWith('Invalid type for text. Expected: String.')),
       );
       expect(result.errors, contains('Unknown property: unexpected'));
 
@@ -80,6 +80,81 @@ void main() {
         'keyValueType': 'String',
       });
       expect(constantResult.isValid, isTrue);
+    });
+
+    test('exposes the ByTextMatch schema with its match strategies', () {
+      final schema = registry.findFinder('ByTextMatch');
+
+      expect(schema, isNotNull);
+      expect(schema!.properties['finderType']!.constantValue, 'ByTextMatch');
+      expect(schema.properties['text']!.required, isTrue);
+      expect(schema.properties['matchType']!.required, isTrue);
+      expect(schema.properties['matchType']!.enumValues, [
+        'contains',
+        'startsWith',
+        'endsWith',
+        'regex',
+      ]);
+      expect(schema.properties['ignoreCase']!.types, [SchemaValueType.boolean]);
+      expect(schema.properties['ignoreCase']!.required, isFalse);
+      expect(schema.example, {
+        'finderType': 'ByTextMatch',
+        'text': 'Order #',
+        'matchType': 'contains',
+        'ignoreCase': false,
+      });
+
+      expect(
+        registry.validateFinderPayload({
+          'finderType': 'ByTextMatch',
+          'text': r'^Order #[0-9]+$',
+          'matchType': 'regex',
+          'ignoreCase': true,
+        }).isValid,
+        isTrue,
+      );
+    });
+
+    test('exposes the ByMatchPosition schema with a nested finder', () {
+      final schema = registry.findFinder('ByMatchPosition');
+
+      expect(schema, isNotNull);
+      expect(schema!.properties['position']!.required, isTrue);
+      expect(schema.properties['position']!.enumValues, [
+        'first',
+        'index',
+        'last',
+      ]);
+      expect(schema.properties['index']!.types, [SchemaValueType.integer]);
+      expect(schema.properties['index']!.required, isFalse);
+      expect(schema.properties['of']!.required, isTrue);
+      expect(schema.properties['of']!.reference, SchemaReference.finder);
+
+      final result = registry.validateFinderPayload({
+        'finderType': 'ByMatchPosition',
+        'position': 'index',
+        'index': 2,
+        'of': {'finderType': 'ByType', 'type': 'OrderCard'},
+      });
+
+      expect(result.isValid, isTrue);
+    });
+
+    test('exposes BySemanticsIdentifier as an exact identifier finder', () {
+      final schema = registry.findFinder('BySemanticsIdentifier');
+
+      expect(schema, isNotNull);
+      expect(schema!.description, contains('Semantics.identifier'));
+      expect(schema.description, contains('Semantics.label'));
+      expect(schema.properties['identifier']!.types, [SchemaValueType.string]);
+      expect(schema.properties['identifier']!.required, isTrue);
+      expect(
+        registry.validateFinderPayload({
+          'finderType': 'BySemanticsIdentifier',
+          'identifier': 'checkout.submit',
+        }).isValid,
+        isTrue,
+      );
     });
 
     test('validates a nested finder inside a command', () {

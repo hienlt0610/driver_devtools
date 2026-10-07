@@ -51,6 +51,42 @@ const List<FinderSchema> builtinFinderSchemas = [
     example: {'finderType': 'ByText', 'text': 'Login'},
   ),
   FinderSchema(
+    type: 'ByTextMatch',
+    description:
+        'Find widget by text using contains, startsWith, endsWith, or regex.',
+    properties: {
+      'finderType': PropertySchema(
+        name: 'finderType',
+        types: [SchemaValueType.string],
+        required: true,
+        constantValue: 'ByTextMatch',
+        hasConstantValue: true,
+      ),
+      'text': PropertySchema(
+        name: 'text',
+        types: [SchemaValueType.string],
+        required: true,
+      ),
+      'matchType': PropertySchema(
+        name: 'matchType',
+        types: [SchemaValueType.string],
+        required: true,
+        enumValues: ['contains', 'startsWith', 'endsWith', 'regex'],
+      ),
+      'ignoreCase': PropertySchema(
+        name: 'ignoreCase',
+        types: [SchemaValueType.boolean],
+        description: 'Whether matching ignores case. Defaults to false.',
+      ),
+    },
+    example: {
+      'finderType': 'ByTextMatch',
+      'text': 'Order #',
+      'matchType': 'contains',
+      'ignoreCase': false,
+    },
+  ),
+  FinderSchema(
     type: 'ByType',
     description: 'Find widget by its runtime type name.',
     properties: {
@@ -135,6 +171,30 @@ const List<FinderSchema> builtinFinderSchemas = [
     },
   ),
   FinderSchema(
+    type: 'BySemanticsIdentifier',
+    description:
+        'Find a widget by exact Semantics.identifier, not Semantics.label.',
+    properties: {
+      'finderType': PropertySchema(
+        name: 'finderType',
+        types: [SchemaValueType.string],
+        required: true,
+        constantValue: 'BySemanticsIdentifier',
+        hasConstantValue: true,
+      ),
+      'identifier': PropertySchema(
+        name: 'identifier',
+        types: [SchemaValueType.string],
+        required: true,
+        description: 'Required and must not be empty.',
+      ),
+    },
+    example: {
+      'finderType': 'BySemanticsIdentifier',
+      'identifier': 'checkout.submit',
+    },
+  ),
+  FinderSchema(
     type: 'Ancestor',
     description: 'Find ancestors of one finder matching another finder.',
     properties: {
@@ -212,6 +272,43 @@ const List<FinderSchema> builtinFinderSchemas = [
       'matching': {'finderType': 'ByText', 'text': 'Settings'},
       'matchRoot': false,
       'firstMatchOnly': true,
+    },
+  ),
+  FinderSchema(
+    type: 'ByMatchPosition',
+    description: 'Select the first, last, or zero-based indexed match.',
+    properties: {
+      'finderType': PropertySchema(
+        name: 'finderType',
+        types: [SchemaValueType.string],
+        required: true,
+        constantValue: 'ByMatchPosition',
+        hasConstantValue: true,
+      ),
+      'position': PropertySchema(
+        name: 'position',
+        types: [SchemaValueType.string],
+        required: true,
+        enumValues: ['first', 'index', 'last'],
+      ),
+      'index': PropertySchema(
+        name: 'index',
+        types: [SchemaValueType.integer],
+        description:
+            'Required for position "index"; zero-based and must not be negative.',
+      ),
+      'of': PropertySchema(
+        name: 'of',
+        types: [SchemaValueType.object],
+        required: true,
+        reference: SchemaReference.finder,
+      ),
+    },
+    example: {
+      'finderType': 'ByMatchPosition',
+      'position': 'index',
+      'index': 2,
+      'of': {'finderType': 'ByType', 'type': 'OrderCard'},
     },
   ),
   FinderSchema(
