@@ -34,6 +34,10 @@ migrate_working_dir/
 **/build/
 coverage/
 
+# Keep the DevTools extension build output in version control.
+!extension/devtools/build/
+!extension/devtools/build/**
+
 # Symbolication related
 app.*.symbols
 
