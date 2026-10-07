@@ -1,5 +1,6 @@
 import 'finder_schema.dart';
 import 'property_schema.dart';
+import 'protocol_schema.dart';
 
 const List<FinderSchema> builtinFinderSchemas = [
   FinderSchema(
@@ -54,6 +55,7 @@ const List<FinderSchema> builtinFinderSchemas = [
     type: 'ByTextMatch',
     description:
         'Find widget by text using contains, startsWith, endsWith, or regex.',
+    group: ProtocolSchemaGroup.custom,
     properties: {
       'finderType': PropertySchema(
         name: 'finderType',
@@ -174,6 +176,7 @@ const List<FinderSchema> builtinFinderSchemas = [
     type: 'BySemanticsIdentifier',
     description:
         'Find a widget by exact Semantics.identifier, not Semantics.label.',
+    group: ProtocolSchemaGroup.custom,
     properties: {
       'finderType': PropertySchema(
         name: 'finderType',
@@ -277,6 +280,7 @@ const List<FinderSchema> builtinFinderSchemas = [
   FinderSchema(
     type: 'ByMatchPosition',
     description: 'Select the first, last, or zero-based indexed match.',
+    group: ProtocolSchemaGroup.custom,
     properties: {
       'finderType': PropertySchema(
         name: 'finderType',

@@ -7,5 +7,6 @@ class FinderSchema extends ProtocolSchema {
     required super.properties,
     required super.example,
     super.allowUnknownProperties,
+    super.group,
   }) : super(kind: ProtocolSchemaKind.finder);
 }

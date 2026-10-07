@@ -275,6 +275,43 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     });
   }
 
+  Future<void> _confirmReset(
+    BuildContext context, {
+    required TextEditingController editor,
+    required String template,
+    required void Function(String?) setError,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Reset editor?'),
+          content: const Text(
+            'This will replace the current JSON with the default template.',
+          ),
+          actions: [
+            TextButton(
+              key: const ValueKey<String>(
+                'driver_automation.reset_cancel_button',
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              key: const ValueKey<String>(
+                'driver_automation.reset_confirm_button',
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Reset'),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted || confirmed != true) return;
+    _resetEditor(editor, template, setError);
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -404,10 +441,11 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
         DevToolsButton(
           key: const ValueKey<String>('driver_automation.finder_reset_button'),
           onPressed:
-              () => _resetEditor(
-                _finderEditor,
-                JsonPayloads.defaultFinder,
-                (error) => _finderError = error,
+              () => _confirmReset(
+                context,
+                editor: _finderEditor,
+                template: JsonPayloads.defaultFinder,
+                setError: (error) => _finderError = error,
               ),
           icon: Icons.restart_alt,
           label: 'Reset',
@@ -471,10 +509,11 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
         DevToolsButton(
           key: const ValueKey<String>('driver_automation.command_reset_button'),
           onPressed:
-              () => _resetEditor(
-                _commandEditor,
-                JsonPayloads.defaultCommand,
-                (error) => _commandError = error,
+              () => _confirmReset(
+                context,
+                editor: _commandEditor,
+                template: JsonPayloads.defaultCommand,
+                setError: (error) => _commandError = error,
               ),
           icon: Icons.restart_alt,
           label: 'Reset',
@@ -527,10 +566,11 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
             'driver_automation.request_data_reset_button',
           ),
           onPressed:
-              () => _resetEditor(
-                _requestDataEditor,
-                JsonPayloads.defaultRequestData,
-                (error) => _requestDataError = error,
+              () => _confirmReset(
+                context,
+                editor: _requestDataEditor,
+                template: JsonPayloads.defaultRequestData,
+                setError: (error) => _requestDataError = error,
               ),
           icon: Icons.restart_alt,
           label: 'Reset',
@@ -569,6 +609,10 @@ class HistoryEntry {
         return 'RequestData';
     }
   }
+
+  String get summary =>
+      '${result.success ? 'Success' : 'Failed'} · '
+      '${result.duration.inMilliseconds} ms';
 }
 
 class _ConnectionHeader extends StatelessWidget {
@@ -1055,10 +1099,19 @@ class _HistoryTile extends StatelessWidget {
         size: 18,
       ),
       title: Text(entry.label),
-      subtitle: Text(
-        '${result.duration.inMilliseconds} ms${result.error == null ? '' : ' · ${result.error}'}',
-      ),
+      subtitle: Text(entry.summary),
       children: [
+        if (result.error != null) ...[
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: _ResultLabel('Error'),
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _ResponseText(result.error!),
+          ),
+          const SizedBox(height: 8),
+        ],
         const Align(
           alignment: Alignment.centerLeft,
           child: _ResultLabel('Input'),

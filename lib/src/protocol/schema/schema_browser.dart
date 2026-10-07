@@ -27,10 +27,16 @@ class SchemaBrowserDialog extends StatefulWidget {
 class _SchemaBrowserDialogState extends State<SchemaBrowserDialog> {
   int _selectedIndex = 0;
 
-  List<ProtocolSchema> get _schemas => switch (widget.kind) {
-    ProtocolSchemaKind.finder => widget.registry.finderSchemas,
-    ProtocolSchemaKind.command => widget.registry.commandSchemas,
-  };
+  List<ProtocolSchema> get _schemas {
+    final registeredSchemas = switch (widget.kind) {
+      ProtocolSchemaKind.finder => widget.registry.finderSchemas,
+      ProtocolSchemaKind.command => widget.registry.commandSchemas,
+    };
+    return [
+      for (final group in ProtocolSchemaGroup.values)
+        ...registeredSchemas.where((schema) => schema.group == group),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -44,6 +50,43 @@ class _SchemaBrowserDialogState extends State<SchemaBrowserDialog> {
             ? 'Finder Schemas'
             : 'Command Schemas';
     final size = MediaQuery.sizeOf(context);
+    final groupedSchemas = <ProtocolSchemaGroup, List<ProtocolSchema>>{};
+    for (final schema in schemas) {
+      groupedSchemas.putIfAbsent(schema.group, () => []).add(schema);
+    }
+    var schemaIndex = 0;
+    final schemaListItems = <Widget>[];
+    for (final group in ProtocolSchemaGroup.values) {
+      final groupSchemas = groupedSchemas[group];
+      if (groupSchemas == null || groupSchemas.isEmpty) continue;
+
+      schemaListItems.add(
+        Padding(
+          padding: EdgeInsets.only(top: schemaListItems.isEmpty ? 0 : 12),
+          child: Text(
+            group.label,
+            style: Theme.of(
+              context,
+            ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+        ),
+      );
+      schemaListItems.add(const SizedBox(height: 8));
+      for (final schema in groupSchemas) {
+        final index = schemaIndex++;
+        schemaListItems.add(
+          ListTile(
+            key: ValueKey<String>(
+              'driver_automation.schema_item_${schema.type}',
+            ),
+            dense: true,
+            selected: index == _selectedIndex,
+            title: Text(schema.type),
+            onTap: () => setState(() => _selectedIndex = index),
+          ),
+        );
+      }
+    }
 
     return AlertDialog(
       title: Text(title),
@@ -58,30 +101,7 @@ class _SchemaBrowserDialogState extends State<SchemaBrowserDialog> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Built-in',
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: schemas.length,
-                      itemBuilder: (context, index) {
-                        final schema = schemas[index];
-                        return ListTile(
-                          key: ValueKey<String>(
-                            'driver_automation.schema_item_${schema.type}',
-                          ),
-                          dense: true,
-                          selected: index == _selectedIndex,
-                          title: Text(schema.type),
-                          onTap: () => setState(() => _selectedIndex = index),
-                        );
-                      },
-                    ),
-                  ),
+                  Expanded(child: ListView(children: schemaListItems)),
                 ],
               ),
             ),

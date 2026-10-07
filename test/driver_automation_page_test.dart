@@ -116,6 +116,13 @@ void main() {
 
     expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(tester.widget<DevToolsButton>(verifyButton).onPressed, isNotNull);
+
+    final historyTile = tester.widget<ExpansionTile>(
+      find.byType(ExpansionTile).last,
+    );
+    final historySummary = historyTile.subtitle! as Text;
+    expect(historySummary.data, startsWith('Failed ·'));
+    expect(historySummary.data, isNot(contains('Timeout')));
   });
 
   testWidgets('clears the session history', (tester) async {
@@ -185,6 +192,11 @@ void main() {
       find.byKey(const ValueKey('driver_automation.finder_reset_button')),
     );
     await tester.pump();
+    expect(find.text('Reset editor?'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.reset_confirm_button')),
+    );
+    await tester.pump();
     expect(finderEditor.controller!.text, JsonPayloads.defaultFinder);
 
     await tester.tap(
@@ -236,6 +248,10 @@ void main() {
       find.byKey(const ValueKey('driver_automation.request_data_reset_button')),
     );
     await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.reset_confirm_button')),
+    );
+    await tester.pump();
     final resetRequestData = JsonPayloads.parseObject(
       requestDataEditor.controller!.text,
     );
@@ -244,6 +260,35 @@ void main() {
       resetRequestData['requestId'],
       isNot(initialRequestData['requestId']),
     );
+  });
+
+  testWidgets('keeps the finder editor unchanged when reset is cancelled', (
+    tester,
+  ) async {
+    final transport = _PendingDriverTransport();
+
+    await tester.pumpWidget(
+      MaterialApp(home: DriverAutomationPage(transport: transport)),
+    );
+    await tester.pump();
+
+    final finderInput = find.byKey(
+      const ValueKey('driver_automation.finder_input'),
+    );
+    final finderEditor = tester.widget<TextField>(finderInput);
+    await tester.enterText(finderInput, '{"changed":true}');
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.finder_reset_button')),
+    );
+    await tester.pump();
+
+    expect(find.text('Reset editor?'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.reset_cancel_button')),
+    );
+    await tester.pump();
+
+    expect(finderEditor.controller!.text, '{"changed":true}');
   });
 
   testWidgets('does not send invalid RequestData JSON', (tester) async {
@@ -293,7 +338,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Finder Schemas'), findsOneWidget);
+    expect(find.text('Built-in'), findsOneWidget);
+    expect(find.text('Custom'), findsOneWidget);
     expect(find.text('ByValueKey'), findsWidgets);
+    expect(find.text('ByTextMatch'), findsOneWidget);
     expect(find.text('Find widget by ValueKey.'), findsOneWidget);
     expect(find.textContaining('login_button'), findsOneWidget);
     expect(editor.controller!.text, initialText);

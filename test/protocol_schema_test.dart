@@ -1,6 +1,7 @@
 import 'package:driver_devtools/src/protocol/schema/command_schema.dart';
 import 'package:driver_devtools/src/protocol/schema/finder_schema.dart';
 import 'package:driver_devtools/src/protocol/schema/property_schema.dart';
+import 'package:driver_devtools/src/protocol/schema/protocol_schema.dart';
 import 'package:driver_devtools/src/protocol/schema/protocol_schema_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -86,7 +87,8 @@ void main() {
       final schema = registry.findFinder('ByTextMatch');
 
       expect(schema, isNotNull);
-      expect(schema!.properties['finderType']!.constantValue, 'ByTextMatch');
+      expect(schema!.group, ProtocolSchemaGroup.custom);
+      expect(schema.properties['finderType']!.constantValue, 'ByTextMatch');
       expect(schema.properties['text']!.required, isTrue);
       expect(schema.properties['matchType']!.required, isTrue);
       expect(schema.properties['matchType']!.enumValues, [
@@ -119,7 +121,8 @@ void main() {
       final schema = registry.findFinder('ByMatchPosition');
 
       expect(schema, isNotNull);
-      expect(schema!.properties['position']!.required, isTrue);
+      expect(schema!.group, ProtocolSchemaGroup.custom);
+      expect(schema.properties['position']!.required, isTrue);
       expect(schema.properties['position']!.enumValues, [
         'first',
         'index',
@@ -144,7 +147,8 @@ void main() {
       final schema = registry.findFinder('BySemanticsIdentifier');
 
       expect(schema, isNotNull);
-      expect(schema!.description, contains('Semantics.identifier'));
+      expect(schema!.group, ProtocolSchemaGroup.custom);
+      expect(schema.description, contains('Semantics.identifier'));
       expect(schema.description, contains('Semantics.label'));
       expect(schema.properties['identifier']!.types, [SchemaValueType.string]);
       expect(schema.properties['identifier']!.required, isTrue);
