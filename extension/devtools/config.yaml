@@ -1,0 +1,8 @@
+name: driver_devtools
+version: 0.1.0
+
+issueTracker: https://github.com/your-org/driver-devtools/issues
+
+materialIconCodePoint: '0xe1b0'
+
+requiresConnection: true
