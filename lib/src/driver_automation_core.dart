@@ -192,7 +192,24 @@ class JsonPayloads {
   static String _encodeDriverValue(Object? value) {
     if (value is String) return value;
     if (value is num || value is bool) return value.toString();
-    return jsonEncode(value);
+    return jsonEncode(_normalizeNestedValue(value));
+  }
+
+  static Object? _normalizeNestedValue(Object? value) {
+    if (value == null || value is String) return value;
+    if (value is num || value is bool) return value.toString();
+    if (value is List) {
+      return value
+          .map<Object?>((item) => _normalizeNestedValue(item))
+          .toList();
+    }
+    if (value is Map<String, dynamic>) {
+      return <String, dynamic>{
+        for (final entry in value.entries)
+          entry.key: _normalizeNestedValue(entry.value),
+      };
+    }
+    return value;
   }
 
   static String _uuidV4() {

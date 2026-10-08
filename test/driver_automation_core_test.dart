@@ -54,6 +54,27 @@ void main() {
       });
     });
 
+    test('normalizes booleans inside nested descendant finders', () {
+      final request = JsonPayloads.finderVerification(
+        '{"finderType":"Descendant","of":{"finderType":"ByType","type":"Column"},'
+        '"matching":{"finderType":"ByTextMatch","text":"Order #",'
+        '"matchType":"contains","ignoreCase":false},'
+        '"matchRoot":false,"firstMatchOnly":true}',
+      );
+
+      expect(request.args, {
+        'command': 'waitFor',
+        'finderType': 'Descendant',
+        'of': '{"finderType":"ByType","type":"Column"}',
+        'matching':
+            '{"finderType":"ByTextMatch","text":"Order #",'
+            '"matchType":"contains","ignoreCase":"false"}',
+        'matchRoot': 'false',
+        'firstMatchOnly': 'true',
+        'timeout': '5000',
+      });
+    });
+
     test('provides an executable E2E RequestData JSON template', () {
       final template = JsonPayloads.defaultRequestData;
       final request = JsonPayloads.requestData(template);
