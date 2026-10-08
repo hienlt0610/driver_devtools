@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:driver_devtools/src/driver_automation_core.dart';
 import 'package:driver_devtools/src/driver_automation_service.dart';
@@ -72,6 +73,32 @@ void main() {
         'matchRoot': 'false',
         'firstMatchOnly': 'true',
         'timeout': '5000',
+      });
+    });
+
+    test('serializes nested finder objects at every wire level', () {
+      final request = JsonPayloads.finderVerification(
+        '{"finderType":"Descendant",'
+        '"of":{"finderType":"ByMatchPosition","position":"index",'
+        '"index":2,"of":{"finderType":"ByType","type":"Column"}},'
+        '"matching":{"finderType":"ByValueKey",'
+        '"keyValueString":"login.submit_button","keyValueType":"String"}}',
+      );
+
+      final outerOf = jsonDecode(request.args['of']!) as Map<String, dynamic>;
+      final innerOf = jsonDecode(outerOf['of'] as String);
+
+      expect(outerOf, {
+        'finderType': 'ByMatchPosition',
+        'position': 'index',
+        'index': '2',
+        'of': '{"finderType":"ByType","type":"Column"}',
+      });
+      expect(innerOf, {'finderType': 'ByType', 'type': 'Column'});
+      expect(jsonDecode(request.args['matching']!), {
+        'finderType': 'ByValueKey',
+        'keyValueString': 'login.submit_button',
+        'keyValueType': 'String',
       });
     });
 
