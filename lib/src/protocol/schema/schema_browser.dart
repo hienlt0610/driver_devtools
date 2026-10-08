@@ -220,14 +220,8 @@ class _SchemaDetails extends StatelessWidget {
                 ),
                 icon: Icons.input,
                 label: 'Use this',
-                onPressed: () async {
+                onPressed: () {
                   onUseExample(example);
-                  try {
-                    await Clipboard.setData(ClipboardData(text: example));
-                  } catch (_) {
-                    // Setting the editor is the primary action; clipboard
-                    // support can be unavailable in widget-test hosts.
-                  }
                   if (context.mounted) {
                     Navigator.of(context).pop();
                   }
@@ -252,7 +246,7 @@ class _SchemaDetails extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Example is for reference only; it is not inserted into the editor.',
+            'Example is inserted into the editor when you use it.',
             style: Theme.of(context).subtleTextStyle,
           ),
         ],

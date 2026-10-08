@@ -14,11 +14,14 @@ Ba console được hiển thị ở ba tab riêng biệt. Trong lúc gửi requ
 trạng thái được reset để có thể thao tác tiếp. Mỗi editor có `Format` và
 `Reset`; RequestData bắt buộc là JSON object theo cấu trúc `E2eCommand`.
 Mỗi lần mở hoặc reset template sẽ tạo một `requestId` UUID v4 mới.
-Session history có thể xoá bằng nút `Clear` trong panel `HISTORY`.
+Session history có thể xoá bằng nút `Clear` trong panel `HISTORY`; nội dung
+editor, schema reset, kết quả và tab hiện tại được giữ lại khi extension page
+được tạo lại.
 
 Finder và Command editor có `Schemas` để xem built-in protocol schema,
 property, kiểu dữ liệu, field bắt buộc, enum/constant và example JSON. Example
-chỉ để tham khảo, không được chèn tự động vào editor. Khi Verify/Execute, JSON
+chỉ được chèn vào editor khi bấm `Use this`; `Reset` sẽ khôi phục example của
+schema gần nhất đã chọn. Khi Verify/Execute, JSON
 được parse trước rồi mới validate theo `ProtocolSchemaRegistry`; JSON chưa hoàn
 chỉnh chỉ báo lỗi parse. Schema chưa biết vẫn được gửi raw và hiển thị cảnh báo
 để custom Finder/Command không bị chặn.

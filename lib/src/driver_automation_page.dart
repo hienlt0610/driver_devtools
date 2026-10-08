@@ -11,11 +11,42 @@ import 'protocol/schema/protocol_schema.dart';
 import 'protocol/schema/protocol_schema_registry.dart';
 import 'protocol/schema/schema_browser.dart';
 
+class DriverAutomationSession {
+  DriverAutomationSession()
+    : finderText = JsonPayloads.defaultFinder,
+      commandText = JsonPayloads.defaultCommand,
+      requestDataText = JsonPayloads.defaultRequestData,
+      finderResetTemplate = JsonPayloads.defaultFinder,
+      commandResetTemplate = JsonPayloads.defaultCommand;
+
+  String finderText;
+  String commandText;
+  String requestDataText;
+  String finderResetTemplate;
+  String commandResetTemplate;
+  DriverExecutionResult? finderResult;
+  DriverExecutionResult? commandResult;
+  DriverExecutionResult? requestDataResult;
+  final history = <HistoryEntry>[];
+  String? finderError;
+  String? commandError;
+  String? requestDataError;
+  String? finderSchemaMessage;
+  String? commandSchemaMessage;
+  int selectedTabIndex = 0;
+}
+
 class DriverAutomationPage extends StatefulWidget {
-  const DriverAutomationPage({super.key, this.transport, this.schemaRegistry});
+  const DriverAutomationPage({
+    super.key,
+    this.transport,
+    this.schemaRegistry,
+    this.session,
+  });
 
   final DriverTransport? transport;
   final ProtocolSchemaRegistry? schemaRegistry;
+  final DriverAutomationSession? session;
 
   @override
   State<DriverAutomationPage> createState() => _DriverAutomationPageState();
@@ -28,38 +59,73 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
 
   late final DriverAutomationController _controller;
   late final DriverTransport _transport;
+  late final DriverAutomationSession _session;
   DriverAutomationService? _service;
   late final JsonTextEditingController _finderEditor;
   late final JsonTextEditingController _commandEditor;
   late final JsonTextEditingController _requestDataEditor;
 
-  DriverExecutionResult? _finderResult;
-  DriverExecutionResult? _commandResult;
-  DriverExecutionResult? _requestDataResult;
-  final _history = <HistoryEntry>[];
   final _busyOperations = <DriverOperationKind>{};
-  String? _finderError;
-  String? _commandError;
-  String? _requestDataError;
-  String? _finderSchemaMessage;
-  String? _commandSchemaMessage;
+
+  DriverExecutionResult? get _finderResult => _session.finderResult;
+  set _finderResult(DriverExecutionResult? value) {
+    _session.finderResult = value;
+  }
+
+  DriverExecutionResult? get _commandResult => _session.commandResult;
+  set _commandResult(DriverExecutionResult? value) {
+    _session.commandResult = value;
+  }
+
+  DriverExecutionResult? get _requestDataResult => _session.requestDataResult;
+  set _requestDataResult(DriverExecutionResult? value) {
+    _session.requestDataResult = value;
+  }
+
+  List<HistoryEntry> get _history => _session.history;
+
+  String? get _finderError => _session.finderError;
+  set _finderError(String? value) {
+    _session.finderError = value;
+  }
+
+  String? get _commandError => _session.commandError;
+  set _commandError(String? value) {
+    _session.commandError = value;
+  }
+
+  String? get _requestDataError => _session.requestDataError;
+  set _requestDataError(String? value) {
+    _session.requestDataError = value;
+  }
+
+  String? get _finderSchemaMessage => _session.finderSchemaMessage;
+  set _finderSchemaMessage(String? value) {
+    _session.finderSchemaMessage = value;
+  }
+
+  String? get _commandSchemaMessage => _session.commandSchemaMessage;
+  set _commandSchemaMessage(String? value) {
+    _session.commandSchemaMessage = value;
+  }
 
   @override
   void initState() {
     super.initState();
+    _session = widget.session ?? DriverAutomationSession();
     if (widget.transport == null) {
       _service = DriverAutomationService(serviceManager);
     }
     _transport = widget.transport ?? _service!;
     _controller = DriverAutomationController(_transport)
       ..addListener(_onControllerChanged);
-    _finderEditor = JsonTextEditingController(text: JsonPayloads.defaultFinder);
-    _commandEditor = JsonTextEditingController(
-      text: JsonPayloads.defaultCommand,
-    );
+    _finderEditor = JsonTextEditingController(text: _session.finderText)
+      ..addListener(() => _session.finderText = _finderEditor.text);
+    _commandEditor = JsonTextEditingController(text: _session.commandText)
+      ..addListener(() => _session.commandText = _commandEditor.text);
     _requestDataEditor = JsonTextEditingController(
-      text: JsonPayloads.defaultRequestData,
-    );
+      text: _session.requestDataText,
+    )..addListener(() => _session.requestDataText = _requestDataEditor.text);
 
     if (_service case final service?) {
       addAutoDisposeListener(
@@ -204,6 +270,11 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
             registry: _schemaRegistry,
             onUseExample: (example) {
               setState(() {
+                if (kind == ProtocolSchemaKind.finder) {
+                  _session.finderResetTemplate = example;
+                } else {
+                  _session.commandResetTemplate = example;
+                }
                 editor.value = TextEditingValue(
                   text: example,
                   selection: TextSelection.collapsed(offset: example.length),
@@ -287,7 +358,7 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
         return AlertDialog(
           title: const Text('Reset editor?'),
           content: const Text(
-            'This will replace the current JSON with the default template.',
+            'This will replace the current JSON with the reset template.',
           ),
           actions: [
             TextButton(
@@ -327,6 +398,7 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
               width: double.infinity,
               child: DefaultTabController(
                 length: 3,
+                initialIndex: _session.selectedTabIndex,
                 child: Column(
                   children: [
                     AreaPaneHeader(
@@ -335,7 +407,8 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
                       includeRightBorder: true,
                       actions: [_ConnectionHeader(status: _controller.status)],
                     ),
-                    const TabBar(
+                    TabBar(
+                      onTap: (index) => _session.selectedTabIndex = index,
                       tabs: [
                         Tab(
                           key: ValueKey<String>('driver_automation.finder_tab'),
@@ -444,7 +517,7 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
               () => _confirmReset(
                 context,
                 editor: _finderEditor,
-                template: JsonPayloads.defaultFinder,
+                template: _session.finderResetTemplate,
                 setError: (error) => _finderError = error,
               ),
           icon: Icons.restart_alt,
@@ -512,7 +585,7 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
               () => _confirmReset(
                 context,
                 editor: _commandEditor,
-                template: JsonPayloads.defaultCommand,
+                template: _session.commandResetTemplate,
                 setError: (error) => _commandError = error,
               ),
           icon: Icons.restart_alt,
@@ -920,8 +993,8 @@ class _ResultPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final successColor =
-        result.success ? Colors.green : Theme.of(context).colorScheme.error;
+    final colorScheme = Theme.of(context).colorScheme;
+    final statusColor = result.success ? Colors.green : colorScheme.error;
     final response =
         result.request.kind == DriverOperationKind.requestData &&
                 result.response is Map<String, dynamic>
@@ -931,69 +1004,296 @@ class _ResultPanel extends StatelessWidget {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: Theme.of(
-          context,
-        ).colorScheme.surfaceContainerHighest.withValues(alpha: .45),
+        color: colorScheme.surfaceContainerLow,
+        border: Border.all(color: colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(8),
       ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+            child: Row(
+              children: [
+                Icon(Icons.data_object, size: 18, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  'RESULT',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1,
+                  ),
+                ),
+                const Spacer(),
+                _ResultStatusChip(
+                  label: result.success ? 'Success' : 'Failed',
+                  duration: result.duration,
+                  color: statusColor,
+                  icon:
+                      result.success ? Icons.check_circle : Icons.error_outline,
+                ),
+              ],
+            ),
+          ),
+          if (result.success)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: _ResultSection(
+                label: 'Response',
+                icon: Icons.output,
+                child: _ResponseCodeBlock(
+                  response == null
+                      ? 'No response body returned.'
+                      : JsonPayloads.displayResponse(response),
+                  muted: response == null,
+                ),
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: _ResultError(message: result.error ?? 'Unknown error'),
+            ),
+          Divider(height: 1, color: colorScheme.outlineVariant),
+          ExpansionTile(
+            tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            title: const Text('Raw details'),
+            subtitle: const Text('Request and transport response'),
+            children: [
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final request = _RawPayloadCard(
+                    label: 'Raw request',
+                    icon: Icons.call_made,
+                    value: result.rawRequest,
+                  );
+                  final response = _RawPayloadCard(
+                    label: 'Raw response',
+                    icon: Icons.call_received,
+                    value: result.rawResponse,
+                  );
+                  if (constraints.maxWidth >= 720) {
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: request),
+                        const SizedBox(width: 12),
+                        Expanded(child: response),
+                      ],
+                    );
+                  }
+                  return Column(
+                    children: [request, const SizedBox(height: 12), response],
+                  );
+                },
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ResultStatusChip extends StatelessWidget {
+  const _ResultStatusChip({
+    required this.label,
+    required this.duration,
+    required this.color,
+    required this.icon,
+  });
+
+  final String label;
+  final Duration duration;
+  final Color color;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: .28)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(color: color, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '${duration.inMilliseconds} ms',
+            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ResultSection extends StatelessWidget {
+  const _ResultSection({
+    required this.label,
+    required this.icon,
+    required this.child,
+  });
+
+  final String label;
+  final IconData icon;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 16, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 6),
+            _ResultLabel(label),
+          ],
+        ),
+        const SizedBox(height: 8),
+        child,
+      ],
+    );
+  }
+}
+
+class _ResultError extends StatelessWidget {
+  const _ResultError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colorScheme.errorContainer.withValues(alpha: .45),
+        border: Border.all(color: colorScheme.error.withValues(alpha: .35)),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.error_outline, size: 18, color: colorScheme.error),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Request failed',
+                  style: TextStyle(
+                    color: colorScheme.error,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                _ResponseCodeBlock(message),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RawPayloadCard extends StatelessWidget {
+  const _RawPayloadCard({
+    required this.label,
+    required this.icon,
+    required this.value,
+  });
+
+  final String label;
+  final IconData icon;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: .35),
+        border: Border.all(color: colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      padding: const EdgeInsets.all(10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
+              Icon(icon, size: 15, color: colorScheme.onSurfaceVariant),
+              const SizedBox(width: 6),
               Text(
-                'RESULT',
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1,
-                ),
-              ),
-              const Spacer(),
-              Icon(
-                result.success ? Icons.check_circle : Icons.error,
-                size: 17,
-                color: successColor,
-              ),
-              const SizedBox(width: 5),
-              Text(
-                result.success ? 'Success' : 'Failed',
-                style: TextStyle(
-                  color: successColor,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                '${result.duration.inMilliseconds} ms',
-                style: Theme.of(context).textTheme.bodySmall,
+                label,
+                style: Theme.of(
+                  context,
+                ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700),
               ),
             ],
           ),
-          if (result.success && response != null) ...[
-            const SizedBox(height: 10),
-            const _ResultLabel('Response'),
-            _ResponseText(response),
-          ],
-          if (!result.success) ...[
-            const SizedBox(height: 10),
-            const _ResultLabel('Error'),
-            _ResponseText(result.error ?? 'Unknown error'),
-          ],
-          const SizedBox(height: 4),
-          ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            childrenPadding: EdgeInsets.zero,
-            title: const Text('Raw details'),
-            children: [
-              const _ResultLabel('Raw Request'),
-              _ResponseText(result.rawRequest),
-              const SizedBox(height: 8),
-              const _ResultLabel('Raw Response'),
-              _ResponseText(result.rawResponse),
-            ],
-          ),
+          const SizedBox(height: 8),
+          _ResponseCodeBlock(value, maxHeight: 190),
         ],
+      ),
+    );
+  }
+}
+
+class _ResponseCodeBlock extends StatelessWidget {
+  const _ResponseCodeBlock(
+    this.text, {
+    this.maxHeight = 180,
+    this.muted = false,
+  });
+
+  final String text;
+  final double maxHeight;
+  final bool muted;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        border: Border.all(color: colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: SingleChildScrollView(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SelectableText(
+            text,
+            style: TextStyle(
+              color: muted ? colorScheme.onSurfaceVariant : null,
+              fontFamily: 'monospace',
+              fontSize: 12,
+              height: 1.45,
+            ),
+          ),
+        ),
       ),
     );
   }

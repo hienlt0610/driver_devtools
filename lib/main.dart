@@ -22,10 +22,12 @@ void main() {
 class DriverAutomationApp extends StatelessWidget {
   const DriverAutomationApp({super.key, this.transport});
 
+  static final _session = DriverAutomationSession();
+
   final DriverTransport? transport;
 
   @override
   Widget build(BuildContext context) {
-    return DriverAutomationPage(transport: transport);
+    return DriverAutomationPage(transport: transport, session: _session);
   }
 }

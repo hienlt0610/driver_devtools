@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:devtools_app_shared/ui.dart';
 import 'package:driver_devtools/src/driver_automation_core.dart';
 import 'package:driver_devtools/src/driver_automation_page.dart';
+import 'package:driver_devtools/main.dart' show DriverAutomationApp;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -100,6 +102,9 @@ void main() {
 
     expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(tester.widget<DevToolsButton>(verifyButton).onPressed, isNotNull);
+    expect(find.text('RESULT'), findsOneWidget);
+    expect(find.text('Response'), findsOneWidget);
+    expect(find.text('Raw details'), findsOneWidget);
 
     await tester.tap(verifyButton);
     await tester.pump();
@@ -116,6 +121,7 @@ void main() {
 
     expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(tester.widget<DevToolsButton>(verifyButton).onPressed, isNotNull);
+    expect(find.text('Request failed'), findsOneWidget);
 
     final historyTile = tester.widget<ExpansionTile>(
       find.byType(ExpansionTile).last,
@@ -291,6 +297,74 @@ void main() {
     expect(finderEditor.controller!.text, '{"changed":true}');
   });
 
+  testWidgets('resets the finder editor to the selected schema example', (
+    tester,
+  ) async {
+    final transport = _PendingDriverTransport();
+
+    await tester.pumpWidget(
+      MaterialApp(home: DriverAutomationPage(transport: transport)),
+    );
+    await tester.pump();
+
+    final finderInput = find.byKey(
+      const ValueKey('driver_automation.finder_input'),
+    );
+    final finderEditor = tester.widget<TextField>(finderInput);
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.finder_schema_button')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.schema_item_ByText')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.schema_use_example_button')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      finderInput,
+      '{"finderType":"ByText","text":"Changed"}',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.finder_reset_button')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.reset_confirm_button')),
+    );
+    await tester.pump();
+
+    expect(
+      finderEditor.controller!.text,
+      '{\n  "finderType": "ByText",\n  "text": "Login"\n}',
+    );
+  });
+
+  testWidgets('preserves editor state when the DevTools app is recreated', (
+    tester,
+  ) async {
+    final transport = _PendingDriverTransport();
+    const editorText = '{"finderType":"ByText","text":"Persisted"}';
+
+    await tester.pumpWidget(
+      MaterialApp(home: DriverAutomationApp(transport: transport)),
+    );
+    await tester.pump();
+    final finderInput = find.byKey(
+      const ValueKey('driver_automation.finder_input'),
+    );
+    await tester.enterText(finderInput, editorText);
+
+    await tester.pumpWidget(
+      MaterialApp(home: DriverAutomationApp(transport: transport)),
+    );
+    await tester.pump();
+
+    expect(tester.widget<TextField>(finderInput).controller!.text, editorText);
+  });
+
   testWidgets('does not send invalid RequestData JSON', (tester) async {
     final transport = _PendingDriverTransport();
 
@@ -374,6 +448,18 @@ void main() {
     tester,
   ) async {
     final transport = _PendingDriverTransport();
+    var clipboardWrites = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+          if (call.method == 'Clipboard.setData') {
+            clipboardWrites++;
+          }
+          return null;
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null),
+    );
 
     await tester.pumpWidget(
       MaterialApp(home: DriverAutomationPage(transport: transport)),
@@ -397,6 +483,7 @@ void main() {
 
     expect(find.text('Finder Schemas'), findsNothing);
     expect(editor.controller!.text, JsonPayloads.defaultFinder);
+    expect(clipboardWrites, 0);
   });
 
   testWidgets('blocks known schema violations before executing', (
