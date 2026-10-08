@@ -87,7 +87,7 @@ void main() {
     await tester.pump();
 
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
-    expect(tester.widget<DevToolsButton>(verifyButton).onPressed, isNull);
+    expect(tester.widget<DevToolsButton>(verifyButton).onPressed, isNotNull);
 
     transport.completeNext(
       const DriverTransportResponse(
@@ -129,6 +129,47 @@ void main() {
     final historySummary = historyTile.subtitle! as Text;
     expect(historySummary.data, startsWith('Failed ·'));
     expect(historySummary.data, isNot(contains('Timeout')));
+  });
+
+  testWidgets('stops a pending operation and ignores its late response', (
+    tester,
+  ) async {
+    final transport = _PendingDriverTransport();
+
+    await tester.pumpWidget(
+      MaterialApp(home: DriverAutomationPage(transport: transport)),
+    );
+    await tester.pump();
+
+    final verifyButton = find.byKey(
+      const ValueKey('driver_automation.finder_verify_button'),
+    );
+    await tester.tap(verifyButton);
+    await tester.pump();
+
+    expect(find.text('Stop'), findsOneWidget);
+    expect(tester.widget<DevToolsButton>(verifyButton).onPressed, isNotNull);
+
+    await tester.tap(verifyButton);
+    await tester.pump();
+
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.text('RESULT'), findsNothing);
+    expect(find.text('No operations in this session.'), findsOneWidget);
+
+    transport.completeNext(
+      const DriverTransportResponse(
+        response: <String, dynamic>{},
+        raw: <String, dynamic>{
+          'isError': false,
+          'response': <String, dynamic>{},
+        },
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('RESULT'), findsNothing);
+    expect(tester.widget<DevToolsButton>(verifyButton).onPressed, isNotNull);
   });
 
   testWidgets('clears the session history', (tester) async {

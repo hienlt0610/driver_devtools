@@ -52,6 +52,10 @@ class DriverAutomationPage extends StatefulWidget {
   State<DriverAutomationPage> createState() => _DriverAutomationPageState();
 }
 
+class _DriverOperation {
+  bool cancelled = false;
+}
+
 class _DriverAutomationPageState extends State<DriverAutomationPage>
     with AutoDisposeMixin {
   ProtocolSchemaRegistry get _schemaRegistry =>
@@ -66,6 +70,7 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
   late final JsonTextEditingController _requestDataEditor;
 
   final _busyOperations = <DriverOperationKind>{};
+  final _activeOperations = <DriverOperationKind, _DriverOperation>{};
 
   DriverExecutionResult? get _finderResult => _session.finderResult;
   set _finderResult(DriverExecutionResult? value) {
@@ -139,6 +144,11 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
 
   @override
   void dispose() {
+    for (final operation in _activeOperations.values) {
+      operation.cancelled = true;
+    }
+    _activeOperations.clear();
+    _busyOperations.clear();
     _controller
       ..removeListener(_onControllerChanged)
       ..dispose();
@@ -292,19 +302,38 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     DriverRequest request, {
     required void Function(DriverExecutionResult result) onResult,
   }) async {
+    final operation = _DriverOperation();
+    _activeOperations[request.kind] = operation;
     setState(() => _busyOperations.add(request.kind));
     try {
       final result = await _controller.execute(request);
-      if (!mounted) return;
+      if (!mounted ||
+          operation.cancelled ||
+          !identical(_activeOperations[request.kind], operation)) {
+        return;
+      }
       setState(() {
         onResult(result);
         _history.insert(0, HistoryEntry(result));
         if (_history.length > 50) _history.removeLast();
+        _busyOperations.remove(request.kind);
       });
     } finally {
-      if (mounted) {
-        setState(() => _busyOperations.remove(request.kind));
+      if (identical(_activeOperations[request.kind], operation)) {
+        _activeOperations.remove(request.kind);
+        if (mounted) {
+          setState(() => _busyOperations.remove(request.kind));
+        }
       }
+    }
+  }
+
+  void _stopOperation(DriverOperationKind kind) {
+    final operation = _activeOperations.remove(kind);
+    if (operation == null) return;
+    operation.cancelled = true;
+    if (mounted) {
+      setState(() => _busyOperations.remove(kind));
     }
   }
 
@@ -525,9 +554,14 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
         ),
         DevToolsButton(
           key: const ValueKey<String>('driver_automation.finder_verify_button'),
-          onPressed: !canExecute || isProcessing ? null : _verifyFinder,
-          icon: Icons.search,
-          label: isProcessing ? 'Verifying...' : 'Verify',
+          onPressed:
+              isProcessing
+                  ? () => _stopOperation(DriverOperationKind.finderVerify)
+                  : canExecute
+                  ? _verifyFinder
+                  : null,
+          icon: isProcessing ? Icons.stop : Icons.search,
+          label: isProcessing ? 'Stop' : 'Verify',
           elevated: true,
           outlined: false,
         ),
@@ -595,9 +629,14 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
           key: const ValueKey<String>(
             'driver_automation.command_execute_button',
           ),
-          onPressed: !canExecute || isProcessing ? null : _executeCommand,
-          icon: Icons.play_arrow,
-          label: isProcessing ? 'Executing...' : 'Execute',
+          onPressed:
+              isProcessing
+                  ? () => _stopOperation(DriverOperationKind.command)
+                  : canExecute
+                  ? _executeCommand
+                  : null,
+          icon: isProcessing ? Icons.stop : Icons.play_arrow,
+          label: isProcessing ? 'Stop' : 'Execute',
           elevated: true,
           outlined: false,
         ),
@@ -652,9 +691,14 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
           key: const ValueKey<String>(
             'driver_automation.request_data_send_button',
           ),
-          onPressed: !canExecute || isProcessing ? null : _sendRequestData,
-          icon: Icons.send,
-          label: isProcessing ? 'Sending...' : 'Send',
+          onPressed:
+              isProcessing
+                  ? () => _stopOperation(DriverOperationKind.requestData)
+                  : canExecute
+                  ? _sendRequestData
+                  : null,
+          icon: isProcessing ? Icons.stop : Icons.send,
+          label: isProcessing ? 'Stop' : 'Send',
           elevated: true,
           outlined: false,
         ),
