@@ -98,7 +98,16 @@ class JsonPayloads {
   }
 
   static DriverRequest finderVerification(String source) {
-    final finder = parseObject(source);
+    return finderVerificationFromCanonical(
+      parseObject(source),
+      rawInput: source,
+    );
+  }
+
+  static DriverRequest finderVerificationFromCanonical(
+    Map<String, dynamic> finder, {
+    String? rawInput,
+  }) {
     final args = <String, String>{
       ..._toDriverArgs(finder),
       'command': 'waitFor',
@@ -106,17 +115,23 @@ class JsonPayloads {
     };
     return DriverRequest(
       kind: DriverOperationKind.finderVerify,
-      rawInput: source,
+      rawInput: rawInput ?? const JsonEncoder.withIndent('  ').convert(finder),
       args: args,
       payload: finder,
     );
   }
 
   static DriverRequest command(String source) {
-    final command = parseObject(source);
+    return commandFromCanonical(parseObject(source), rawInput: source);
+  }
+
+  static DriverRequest commandFromCanonical(
+    Map<String, dynamic> command, {
+    String? rawInput,
+  }) {
     return DriverRequest(
       kind: DriverOperationKind.command,
-      rawInput: source,
+      rawInput: rawInput ?? const JsonEncoder.withIndent('  ').convert(command),
       args: _toDriverArgs(command),
       payload: command,
     );
@@ -205,9 +220,7 @@ class JsonPayloads {
     if (value == null || value is String) return value;
     if (value is num || value is bool) return value.toString();
     if (value is List) {
-      return value
-          .map<Object?>((item) => _normalizeNestedValue(item))
-          .toList();
+      return value.map<Object?>((item) => _normalizeNestedValue(item)).toList();
     }
     if (value is Map<String, dynamic>) {
       return <String, dynamic>{

@@ -101,7 +101,11 @@ class _SchemaBrowserDialogState extends State<SchemaBrowserDialog> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: ListView(children: schemaListItems)),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Column(children: schemaListItems),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -117,7 +121,18 @@ class _SchemaBrowserDialogState extends State<SchemaBrowserDialog> {
                       )
                       : _SchemaDetails(
                         schema: selectedSchema,
-                        onUseExample: widget.onUseExample,
+                        onUseExample: () {
+                          final selected =
+                              schemas[_selectedIndex.clamp(
+                                0,
+                                schemas.length - 1,
+                              )];
+                          widget.onUseExample(
+                            const JsonEncoder.withIndent(
+                              '  ',
+                            ).convert(selected.example),
+                          );
+                        },
                       ),
             ),
           ],
@@ -140,7 +155,7 @@ class _SchemaDetails extends StatelessWidget {
   const _SchemaDetails({required this.schema, required this.onUseExample});
 
   final ProtocolSchema schema;
-  final ValueChanged<String> onUseExample;
+  final VoidCallback onUseExample;
 
   @override
   Widget build(BuildContext context) {
@@ -189,7 +204,11 @@ class _SchemaDetails extends StatelessWidget {
               _PropertyDetails(property: property),
           ],
           const SizedBox(height: 16),
-          Row(
+          Wrap(
+            alignment: WrapAlignment.end,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               Text(
                 'Example JSON',
@@ -197,7 +216,6 @@ class _SchemaDetails extends StatelessWidget {
                   context,
                 ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
               ),
-              const Spacer(),
               DevToolsButton(
                 key: const ValueKey<String>(
                   'driver_automation.schema_copy_button',
@@ -213,7 +231,6 @@ class _SchemaDetails extends StatelessWidget {
                   }
                 },
               ),
-              const SizedBox(width: 8),
               DevToolsButton(
                 key: const ValueKey<String>(
                   'driver_automation.schema_use_example_button',
@@ -221,7 +238,7 @@ class _SchemaDetails extends StatelessWidget {
                 icon: Icons.input,
                 label: 'Use this',
                 onPressed: () {
-                  onUseExample(example);
+                  onUseExample();
                   if (context.mounted) {
                     Navigator.of(context).pop();
                   }

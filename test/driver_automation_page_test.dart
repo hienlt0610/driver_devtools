@@ -9,6 +9,294 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'shows DSL completions in a popup and inserts the selected item',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DriverAutomationPage(transport: _CaptureDriverTransport()),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final input = find.byKey(
+        const ValueKey('driver_automation.finder_input'),
+      );
+      await tester.enterText(input, 'ty');
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('driver_automation.finder_suggestion_type')),
+        findsOneWidget,
+      );
+      expect(find.byType(ActionChip), findsNothing);
+
+      await tester.tap(
+        find.byKey(const ValueKey('driver_automation.finder_suggestion_type')),
+      );
+      await tester.pump();
+
+      expect(tester.widget<TextField>(input).controller!.text, 'type("")');
+    },
+  );
+
+  testWidgets('renders compact two-line completion rows', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DriverAutomationPage(transport: _CaptureDriverTransport()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final input = find.byKey(const ValueKey('driver_automation.finder_input'));
+    await tester.enterText(input, 'ty');
+    await tester.pump();
+    await tester.pump();
+
+    final item = find.byKey(
+      const ValueKey('driver_automation.finder_suggestion_type'),
+    );
+    final popup = tester.widget<Material>(
+      find.byKey(const ValueKey('driver_automation.finder_completion_popup')),
+    );
+    expect(popup.color, const Color(0xEB171A1F));
+    expect(popup.elevation, 4);
+    expect(popup.shape, isA<RoundedRectangleBorder>());
+    expect(
+      tester
+          .getSize(
+            find.byKey(
+              const ValueKey('driver_automation.finder_completion_popup'),
+            ),
+          )
+          .width,
+      lessThanOrEqualTo(360),
+    );
+    expect(tester.getSize(item).height, lessThanOrEqualTo(52));
+    final title = tester.widget<RichText>(
+      find.descendant(of: item, matching: find.byType(RichText)).first,
+    );
+    expect(title.text.toPlainText(), contains('type(value: String)'));
+    expect(find.text('Match widgets by runtime type.'), findsOneWidget);
+  });
+
+  testWidgets('supports keyboard navigation and acceptance', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DriverAutomationPage(transport: _CaptureDriverTransport()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final input = find.byKey(const ValueKey('driver_automation.finder_input'));
+    await tester.enterText(input, '');
+    await tester.pump();
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    expect(tester.widget<TextField>(input).controller!.text, 'key("")');
+  });
+
+  testWidgets('supports dismissing and explicitly reopening completions', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DriverAutomationPage(transport: _CaptureDriverTransport()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final input = find.byKey(const ValueKey('driver_automation.finder_input'));
+    await tester.enterText(input, 'ty');
+    await tester.pump();
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('driver_automation.finder_suggestion_type')),
+      findsOneWidget,
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('driver_automation.finder_suggestion_type')),
+      findsNothing,
+    );
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('driver_automation.finder_suggestion_type')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('starts the finder console in DSL mode', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DriverAutomationPage(transport: _CaptureDriverTransport()),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('driver_automation.finder_mode_dsl')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('driver_automation.finder_dsl_input')),
+      findsOneWidget,
+    );
+    final editor = tester.widget<TextField>(
+      find.byKey(const ValueKey('driver_automation.finder_input')),
+    );
+    expect(editor.controller!.text, 'key("login_button")');
+    expect(
+      find.byKey(const ValueKey('driver_automation.finder_json_input')),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+    'regenerates the JSON controller after valid DSL clears invalid JSON',
+    (tester) async {
+      final session =
+          DriverAutomationSession()
+            ..finderText = '{"finderType":"ByType","type":"Column"}'
+            ..finderDslText = 'type("Column")';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DriverAutomationPage(
+            transport: _CaptureDriverTransport(),
+            session: session,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final input = find.byKey(
+        const ValueKey('driver_automation.finder_input'),
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('driver_automation.finder_mode_json')),
+      );
+      await tester.enterText(input, '');
+      await tester.tap(
+        find.byKey(const ValueKey('driver_automation.finder_mode_dsl')),
+      );
+      await tester.enterText(input, 'type("Row")');
+      await tester.tap(
+        find.byKey(const ValueKey('driver_automation.finder_mode_json')),
+      );
+      await tester.pump();
+
+      expect(
+        tester.widget<TextField>(input).controller!.text,
+        contains('"type": "Row"'),
+      );
+      expect(session.finderCanonical, {'finderType': 'ByType', 'type': 'Row'});
+      expect(session.finderError, isNull);
+    },
+  );
+
+  testWidgets(
+    'regenerates the DSL controller after valid JSON clears invalid DSL',
+    (tester) async {
+      final session =
+          DriverAutomationSession()
+            ..finderText = '{"finderType":"ByType","type":"Column"}'
+            ..finderDslText = 'type("Column")';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DriverAutomationPage(
+            transport: _CaptureDriverTransport(),
+            session: session,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final input = find.byKey(
+        const ValueKey('driver_automation.finder_input'),
+      );
+      await tester.enterText(input, 'type("Column"');
+      await tester.tap(
+        find.byKey(const ValueKey('driver_automation.finder_mode_json')),
+      );
+      await tester.enterText(input, '{"finderType":"ByType","type":"Text"}');
+      await tester.tap(
+        find.byKey(const ValueKey('driver_automation.finder_mode_dsl')),
+      );
+      await tester.pump();
+
+      expect(tester.widget<TextField>(input).controller!.text, 'type("Text")');
+      expect(session.finderCanonical, {'finderType': 'ByType', 'type': 'Text'});
+      expect(session.finderError, isNull);
+    },
+  );
+
+  testWidgets('executes a valid DSL finder through the existing transport', (
+    tester,
+  ) async {
+    final transport = _CaptureDriverTransport();
+    await tester.pumpWidget(
+      MaterialApp(home: DriverAutomationPage(transport: transport)),
+    );
+    await tester.pump();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('driver_automation.finder_input')),
+      'type("Column").first()',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.finder_verify_button')),
+    );
+    await tester.pump();
+
+    expect(transport.executionCalls.single, {
+      'command': 'waitFor',
+      'finderType': 'ByMatchPosition',
+      'position': 'first',
+      'of': '{"finderType":"ByType","type":"Column"}',
+      'timeout': '5000',
+    });
+  });
+
+  testWidgets('does not execute an invalid active DSL draft', (tester) async {
+    final transport = _CaptureDriverTransport();
+    await tester.pumpWidget(
+      MaterialApp(home: DriverAutomationPage(transport: transport)),
+    );
+    await tester.pump();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('driver_automation.finder_input')),
+      'type("Column"',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.finder_verify_button')),
+    );
+    await tester.pump();
+
+    expect(transport.executionCalls, isEmpty);
+    expect(find.textContaining('Expected ")"'), findsOneWidget);
+  });
+
   testWidgets('shows each driver operation in its own tab', (tester) async {
     final transport = _PendingDriverTransport();
 
@@ -159,7 +447,10 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(tester.widget<DevToolsButton>(verifyButton).onPressed, isNotNull);
     expect(find.text('RESULT'), findsOneWidget);
-    expect(find.text('Response'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('driver_automation.result_copy_button')),
+      findsOneWidget,
+    );
     expect(find.text('Raw details'), findsOneWidget);
 
     await tester.tap(verifyButton);
@@ -182,9 +473,84 @@ void main() {
     final historyTile = tester.widget<ExpansionTile>(
       find.byType(ExpansionTile).last,
     );
-    final historySummary = historyTile.subtitle! as Text;
-    expect(historySummary.data, startsWith('Failed ·'));
-    expect(historySummary.data, isNot(contains('Timeout')));
+    expect(find.textContaining('Failed ·'), findsOneWidget);
+    expect(find.textContaining('Timeout'), findsWidgets);
+    expect(historyTile.subtitle, isNull);
+  });
+
+  testWidgets('keeps Finder controls grouped around the editor', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DriverAutomationPage(transport: _CaptureDriverTransport()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final mode = find.byKey(
+      const ValueKey('driver_automation.finder_mode_dsl'),
+    );
+    final input = find.byKey(const ValueKey('driver_automation.finder_input'));
+    final schema = find.byKey(
+      const ValueKey('driver_automation.finder_schema_button'),
+    );
+    final format = find.byKey(
+      const ValueKey('driver_automation.finder_format_button'),
+    );
+    final generate = find.byKey(
+      const ValueKey('driver_automation.finder_generate_java_button'),
+    );
+    final reset = find.byKey(
+      const ValueKey('driver_automation.finder_reset_button'),
+    );
+    final verify = find.byKey(
+      const ValueKey('driver_automation.finder_verify_button'),
+    );
+
+    expect(
+      tester.getTopLeft(input).dy -
+          (tester.getTopLeft(mode).dy + tester.getSize(mode).height),
+      lessThan(28),
+    );
+    expect(tester.getTopLeft(schema).dy, lessThan(tester.getTopLeft(input).dy));
+    expect(
+      tester.getTopLeft(format).dx,
+      lessThan(tester.getTopLeft(generate).dx),
+    );
+    expect(
+      tester.getTopLeft(generate).dx,
+      lessThan(tester.getTopLeft(reset).dx),
+    );
+    expect(tester.getTopLeft(reset).dx, lessThan(tester.getTopLeft(verify).dx));
+  });
+
+  testWidgets('keeps Verify accessible on a narrow viewport', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DriverAutomationPage(transport: _CaptureDriverTransport()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final reset = find.byKey(
+      const ValueKey('driver_automation.finder_reset_button'),
+    );
+    final verify = find.byKey(
+      const ValueKey('driver_automation.finder_verify_button'),
+    );
+    expect(tester.takeException(), isNull);
+    expect(
+      tester.getTopLeft(verify).dy,
+      greaterThan(tester.getTopLeft(reset).dy + tester.getSize(reset).height),
+    );
   });
 
   testWidgets('stops a pending operation and ignores its late response', (
@@ -251,14 +617,14 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Finder Verify'), findsOneWidget);
+    expect(find.textContaining('Finder Verify'), findsOneWidget);
 
     await tester.tap(
       find.byKey(const ValueKey('driver_automation.history_clear_button')),
     );
     await tester.pump();
 
-    expect(find.text('Finder Verify'), findsNothing);
+    expect(find.textContaining('Finder Verify'), findsNothing);
     expect(find.text('No operations in this session.'), findsOneWidget);
   });
 
@@ -514,7 +880,7 @@ void main() {
     expect(find.text('ByValueKey'), findsWidgets);
     expect(find.text('ByTextMatch'), findsOneWidget);
     expect(find.text('Find widget by ValueKey.'), findsOneWidget);
-    expect(find.textContaining('login_button'), findsOneWidget);
+    expect(find.textContaining('login_button'), findsNWidgets(2));
     expect(editor.controller!.text, initialText);
   });
 
@@ -701,6 +1067,31 @@ class _PendingDriverTransport implements DriverTransport {
   }
 
   int get pendingCount => _pending.length;
+}
+
+class _CaptureDriverTransport implements DriverTransport {
+  final executionCalls = <Map<String, String>>[];
+
+  @override
+  Future<DriverTransportResponse> call(Map<String, String> args) async {
+    if (args['command'] == 'get_health') {
+      return const DriverTransportResponse(
+        response: <String, dynamic>{'status': 'ok'},
+        raw: <String, dynamic>{
+          'isError': false,
+          'response': <String, dynamic>{'status': 'ok'},
+        },
+      );
+    }
+    executionCalls.add(Map<String, String>.from(args));
+    return const DriverTransportResponse(
+      response: <String, dynamic>{'ok': true},
+      raw: <String, dynamic>{
+        'isError': false,
+        'response': <String, dynamic>{'ok': true},
+      },
+    );
+  }
 }
 
 class _ConnectionStateTransport implements DriverTransport {

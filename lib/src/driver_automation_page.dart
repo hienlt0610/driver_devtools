@@ -1,13 +1,18 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:devtools_app_shared/ui.dart';
 import 'package:devtools_app_shared/utils.dart';
 import 'package:devtools_extensions/devtools_extensions.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import 'driver_automation_core.dart';
 import 'driver_automation_service.dart';
+import 'finder_dsl.dart';
+import 'finder_completion.dart';
+import 'finder_editor.dart';
 import 'java_finder_generator.dart';
 import 'protocol/schema/protocol_schema.dart';
 import 'protocol/schema/protocol_schema_registry.dart';
@@ -16,12 +21,17 @@ import 'protocol/schema/schema_browser.dart';
 class DriverAutomationSession {
   DriverAutomationSession()
     : finderText = JsonPayloads.defaultFinder,
+      finderDslText = 'key("login_button")',
+      finderMode = FinderEditorMode.dsl,
       commandText = JsonPayloads.defaultCommand,
       requestDataText = JsonPayloads.defaultRequestData,
       finderResetTemplate = JsonPayloads.defaultFinder,
       commandResetTemplate = JsonPayloads.defaultCommand;
 
   String finderText;
+  String finderDslText;
+  FinderEditorMode finderMode;
+  Map<String, dynamic>? finderCanonical;
   String commandText;
   String requestDataText;
   String finderResetTemplate;
@@ -67,9 +77,11 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
   late final DriverTransport _transport;
   late final DriverAutomationSession _session;
   DriverAutomationService? _service;
-  late final JsonTextEditingController _finderEditor;
+  late final FinderEditorState _finderState;
+  late final FinderTextEditingController _finderEditor;
   late final JsonTextEditingController _commandEditor;
   late final JsonTextEditingController _requestDataEditor;
+  bool _updatingFinderEditors = false;
 
   final _busyOperations = <DriverOperationKind>{};
   final _activeOperations = <DriverOperationKind, _DriverOperation>{};
@@ -111,6 +123,29 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     _session.finderSchemaMessage = value;
   }
 
+  void _logFinderSync(
+    String source,
+    String event, {
+    String regeneration = 'notAttempted',
+    String controllerUpdate = 'notAttempted',
+    String? skipReason,
+  }) {
+    finderSyncLog(
+      '$source $event '
+      'activeMode=${_finderState.mode.name} '
+      'dslValid=${_finderState.dslDraftIsValid} '
+      'jsonValid=${_finderState.jsonDraftIsValid} '
+      'dslDirty=${_finderState.dslDraftIsDirty} '
+      'jsonDirty=${_finderState.jsonDraftIsDirty} '
+      'canonicalRevision=${_finderState.canonicalRevision} '
+      'sotCommitted=${_finderState.canonical != null} '
+      'regeneration=$regeneration '
+      'controllerTextUpdated=$controllerUpdate '
+      'regenerationSkipped=${skipReason != null} '
+      '${skipReason == null ? '' : 'reason=$skipReason'}',
+    );
+  }
+
   String? get _commandSchemaMessage => _session.commandSchemaMessage;
   set _commandSchemaMessage(String? value) {
     _session.commandSchemaMessage = value;
@@ -126,8 +161,22 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     _transport = widget.transport ?? _service!;
     _controller = DriverAutomationController(_transport)
       ..addListener(_onControllerChanged);
-    _finderEditor = JsonTextEditingController(text: _session.finderText)
-      ..addListener(() => _session.finderText = _finderEditor.text);
+    _finderState = FinderEditorState(
+      initialJson: _session.finderText,
+      initialCanonical: _session.finderCanonical,
+      registry: _schemaRegistry,
+    );
+    if (_session.finderDslText != _finderState.dslText) {
+      _finderState.updateDsl(_session.finderDslText);
+    }
+    _finderState.setMode(_session.finderMode);
+    _finderEditor = FinderTextEditingController(
+      text:
+          _finderState.mode == FinderEditorMode.dsl
+              ? _finderState.dslText
+              : _finderState.jsonText,
+      mode: _finderState.mode,
+    )..addListener(_onFinderChanged);
     _commandEditor = JsonTextEditingController(text: _session.commandText)
       ..addListener(() => _session.commandText = _commandEditor.text);
     _requestDataEditor = JsonTextEditingController(
@@ -164,6 +213,129 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     if (mounted) setState(() {});
   }
 
+  void _onFinderChanged() {
+    if (_updatingFinderEditors) {
+      _logFinderSync(
+        _finderState.mode.name,
+        'controllerUpdate',
+        controllerUpdate: 'skipped',
+        skipReason: 'synchronizationGuard',
+      );
+      return;
+    }
+    final text = _finderEditor.text;
+    final source = _finderState.mode.name;
+    _logFinderSync(source, 'userEdit', controllerUpdate: 'byUserInput');
+    // Keep old JSON paste workflows working while the preferred mode is DSL.
+    if (_finderState.mode == FinderEditorMode.dsl &&
+        text.trimLeft().startsWith('{')) {
+      _finderState.setMode(FinderEditorMode.json);
+      _finderEditor.mode = FinderEditorMode.json;
+      _finderState.updateJson(text);
+    } else if (_finderState.mode == FinderEditorMode.dsl) {
+      _finderState.updateDsl(text);
+    } else {
+      _finderState.updateJson(text);
+    }
+    _syncFinderSession();
+    _logFinderSync(source, 'stateNotification', regeneration: 'stateHandled');
+    if (mounted) setState(() {});
+  }
+
+  void _syncFinderSession() {
+    _session.finderMode = _finderState.mode;
+    _session.finderDslText = _finderState.dslText;
+    _session.finderText = _finderState.jsonText;
+    _session.finderCanonical = _finderState.canonical;
+    _session.finderError =
+        _finderState.mode == FinderEditorMode.dsl
+            ? _finderState.dslError ?? _finderState.dslMessage
+            : _finderState.jsonError;
+    _session.finderSchemaMessage =
+        _finderState.mode == FinderEditorMode.dsl
+            ? null
+            : _finderState.jsonMessage;
+    _logFinderSync('state', 'notification');
+  }
+
+  void _setFinderMode(FinderEditorMode mode) {
+    if (_finderState.mode == mode) {
+      _logFinderSync(
+        mode.name,
+        'modeSwitch',
+        controllerUpdate: 'skipped',
+        skipReason: 'alreadyActive',
+      );
+      return;
+    }
+    _updatingFinderEditors = true;
+    _finderState.setMode(mode);
+    final text =
+        mode == FinderEditorMode.dsl
+            ? _finderState.dslText
+            : _finderState.jsonText;
+    _finderEditor.mode = mode;
+    _finderEditor.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+      composing: TextRange.empty,
+    );
+    _updatingFinderEditors = false;
+    _syncFinderSession();
+    _logFinderSync(mode.name, 'modeSwitch', controllerUpdate: 'updated');
+    setState(() {});
+  }
+
+  void _setFinderCanonical(Map<String, dynamic> canonical) {
+    _updatingFinderEditors = true;
+    _finderState.loadCanonical(canonical);
+    final text =
+        _finderState.mode == FinderEditorMode.dsl
+            ? _finderState.dslText
+            : _finderState.jsonText;
+    _finderEditor.mode = _finderState.mode;
+    _finderEditor.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+      composing: TextRange.empty,
+    );
+    _updatingFinderEditors = false;
+    _syncFinderSession();
+    _logFinderSync(
+      _finderState.mode.name,
+      'programmaticUpdate',
+      regeneration: 'stateHandled',
+      controllerUpdate: 'updated',
+    );
+  }
+
+  Map<String, dynamic>? _resolveFinderDraft() {
+    _logFinderSync(
+      _finderState.mode.name,
+      'validation',
+      controllerUpdate: 'skipped',
+      skipReason: 'programmaticResolveGuard',
+    );
+    _updatingFinderEditors = true;
+    if (_finderState.mode == FinderEditorMode.dsl &&
+        _finderEditor.text.trimLeft().startsWith('{')) {
+      _finderState.setMode(FinderEditorMode.json);
+      _finderEditor.mode = FinderEditorMode.json;
+      _finderState.updateJson(_finderEditor.text);
+    } else if (_finderState.mode == FinderEditorMode.dsl) {
+      _finderState.updateDsl(_finderEditor.text);
+    } else {
+      _finderState.updateJson(_finderEditor.text);
+    }
+    _updatingFinderEditors = false;
+    _syncFinderSession();
+    if (!_finderState.activeDraftIsValid) {
+      setState(() {});
+      return null;
+    }
+    return _finderState.canonical;
+  }
+
   void _onDevToolsConnectionChanged() {
     if (!mounted) return;
     unawaited(_controller.reconnect());
@@ -184,37 +356,22 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
   }
 
   Future<void> _verifyFinder() async {
-    final request = _parse(
-      _finderEditor.text,
-      JsonPayloads.finderVerification,
-      onError: (error) => _finderError = error,
-      clearError: () => _finderError = null,
-      validateSchema: _schemaRegistry.validateFinderPayload,
-      onSchemaMessage: (message) => _finderSchemaMessage = message,
+    final canonical = _resolveFinderDraft();
+    if (canonical == null) return;
+    final source = _finderEditor.text;
+    final request = JsonPayloads.finderVerificationFromCanonical(
+      canonical,
+      rawInput: source,
     );
-    if (request == null) {
-      setState(() {});
-      return;
-    }
     await _execute(request, onResult: (result) => _finderResult = result);
   }
 
   void _generateJavaFinder(BuildContext context) {
-    final request = _parse(
-      _finderEditor.text,
-      JsonPayloads.finderVerification,
-      onError: (error) => _finderError = error,
-      clearError: () => _finderError = null,
-      validateSchema: _schemaRegistry.validateFinderPayload,
-      onSchemaMessage: (message) => _finderSchemaMessage = message,
-    );
-    if (request == null) {
-      setState(() {});
-      return;
-    }
+    final canonical = _resolveFinderDraft();
+    if (canonical == null) return;
 
     try {
-      final code = JavaFinderGenerator.generate(request.payload!);
+      final code = JavaFinderGenerator.generate(canonical);
       setState(() => _finderError = null);
       showDialog<void>(
         context: context,
@@ -326,6 +483,26 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     );
   }
 
+  void _openFinderSchemaBrowser(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder:
+          (context) => SchemaBrowserDialog(
+            kind: ProtocolSchemaKind.finder,
+            registry: _schemaRegistry,
+            onUseExample: (example) {
+              final canonical = JsonPayloads.parseObject(example);
+              setState(() {
+                _session.finderResetTemplate = example;
+                _setFinderCanonical(canonical);
+                _finderError = null;
+                _finderSchemaMessage = null;
+              });
+            },
+          ),
+    );
+  }
+
   Future<void> _execute(
     DriverRequest request, {
     required void Function(DriverExecutionResult result) onResult,
@@ -388,6 +565,67 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     }
   }
 
+  void _formatFinder() {
+    if (_finderState.mode == FinderEditorMode.dsl &&
+        _finderEditor.text.trimLeft().startsWith('{')) {
+      _updatingFinderEditors = true;
+      _finderState.setMode(FinderEditorMode.json);
+      _finderEditor.mode = FinderEditorMode.json;
+      _finderState.updateJson(_finderEditor.text);
+      _updatingFinderEditors = false;
+    }
+    if (_finderState.mode == FinderEditorMode.json) {
+      try {
+        final formatted = JsonPayloads.format(_finderEditor.text);
+        _updatingFinderEditors = true;
+        _finderState.updateJson(formatted);
+        _finderEditor.value = TextEditingValue(
+          text: formatted,
+          selection: TextSelection.collapsed(offset: formatted.length),
+          composing: TextRange.empty,
+        );
+        _updatingFinderEditors = false;
+        _syncFinderSession();
+        setState(() {});
+      } on JsonPayloadException catch (error) {
+        setState(
+          () =>
+              _finderError =
+                  '${error.message}\nLine ${error.line}, Column ${error.column}',
+        );
+      }
+      return;
+    }
+    final canonical = _resolveFinderDraft();
+    if (canonical == null) return;
+    try {
+      final formatted = FinderDslGenerator.generateCanonical(
+        canonical,
+        registry: _schemaRegistry,
+      );
+      _updatingFinderEditors = true;
+      if (_finderState.mode == FinderEditorMode.dsl) {
+        _finderState.updateDsl(formatted);
+      }
+      _finderEditor.value = TextEditingValue(
+        text: formatted,
+        selection: TextSelection.collapsed(offset: formatted.length),
+        composing: TextRange.empty,
+      );
+      _updatingFinderEditors = false;
+      _syncFinderSession();
+      setState(() {});
+    } on JsonPayloadException catch (error) {
+      setState(
+        () =>
+            _finderError =
+                '${error.message}\nLine ${error.line}, Column ${error.column}',
+      );
+    } on FinderDslException catch (error) {
+      setState(() => _finderError = error.toString());
+    }
+  }
+
   void _resetEditor(
     TextEditingController editor,
     String template,
@@ -440,6 +678,52 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     _resetEditor(editor, template, setError);
   }
 
+  Future<void> _confirmFinderReset(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Reset editor?'),
+          content: const Text(
+            'This will replace the current finder with the reset template.',
+          ),
+          actions: [
+            TextButton(
+              key: const ValueKey<String>(
+                'driver_automation.reset_cancel_button',
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              key: const ValueKey<String>(
+                'driver_automation.reset_confirm_button',
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Reset'),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted || confirmed != true) return;
+    try {
+      _setFinderCanonical(
+        JsonPayloads.parseObject(_session.finderResetTemplate),
+      );
+      setState(() {
+        _finderError = null;
+        _finderSchemaMessage = null;
+      });
+    } on JsonPayloadException catch (error) {
+      setState(
+        () =>
+            _finderError =
+                '${error.message}\nLine ${error.line}, Column ${error.column}',
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -453,65 +737,83 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
             child: SizedBox(
               height: constraints.maxHeight,
               width: double.infinity,
-              child: DefaultTabController(
-                length: 3,
-                initialIndex: _session.selectedTabIndex,
-                child: Column(
-                  children: [
-                    AreaPaneHeader(
-                      title: const Text('Driver Automation'),
-                      includeLeftBorder: true,
-                      includeRightBorder: true,
-                      actions: [_ConnectionHeader(status: _controller.status)],
-                    ),
-                    TabBar(
-                      onTap: (index) => _session.selectedTabIndex = index,
-                      tabs: [
-                        Tab(
-                          key: ValueKey<String>('driver_automation.finder_tab'),
-                          text: 'FINDER',
-                        ),
-                        Tab(
-                          key: ValueKey<String>(
-                            'driver_automation.command_tab',
+              child: Material(
+                child: DefaultTabController(
+                  length: 3,
+                  animationDuration: Duration.zero,
+                  initialIndex: _session.selectedTabIndex,
+                  child: Column(
+                    children: [
+                      AreaPaneHeader(
+                        title: const Text('Driver Automation'),
+                        includeLeftBorder: true,
+                        includeRightBorder: true,
+                        actions: [
+                          _ConnectionHeader(
+                            status: _controller.status,
+                            compact: constraints.maxWidth < 560,
                           ),
-                          text: 'COMMAND',
-                        ),
-                        Tab(
-                          key: ValueKey<String>(
-                            'driver_automation.request_data_tab',
+                          DevToolsButton(
+                            key: const ValueKey<String>(
+                              'driver_automation.history_clear_button',
+                            ),
+                            icon: Icons.delete_outline,
+                            tooltip: 'Clear session history',
+                            onPressed: _history.isEmpty ? null : _clearHistory,
                           ),
-                          text: 'REQUEST DATA',
-                        ),
-                      ],
-                    ),
-                    if (_controller.status ==
-                        DriverConnectionStatus.unavailable)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                        child: _DriverUnavailableNotice(
-                          onRetry: _retryConnection,
-                        ),
-                      ),
-                    if (_controller.status ==
-                        DriverConnectionStatus.disconnected)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                        child: _DriverDisconnectedNotice(
-                          onRetry: _retryConnection,
-                        ),
-                      ),
-                    Expanded(
-                      child: TabBarView(
-                        physics: const NeverScrollableScrollPhysics(),
-                        children: [
-                          _buildTabContent(_buildFinderConsole(context)),
-                          _buildTabContent(_buildCommandConsole(context)),
-                          _buildTabContent(_buildRequestDataConsole(context)),
                         ],
                       ),
-                    ),
-                  ],
+                      TabBar(
+                        onTap: (index) => _session.selectedTabIndex = index,
+                        tabs: [
+                          Tab(
+                            key: ValueKey<String>(
+                              'driver_automation.finder_tab',
+                            ),
+                            text: 'FINDER',
+                          ),
+                          Tab(
+                            key: ValueKey<String>(
+                              'driver_automation.command_tab',
+                            ),
+                            text: 'COMMAND',
+                          ),
+                          Tab(
+                            key: ValueKey<String>(
+                              'driver_automation.request_data_tab',
+                            ),
+                            text: 'REQUEST DATA',
+                          ),
+                        ],
+                      ),
+                      if (_controller.status ==
+                          DriverConnectionStatus.unavailable)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                          child: _DriverUnavailableNotice(
+                            onRetry: _retryConnection,
+                          ),
+                        ),
+                      if (_controller.status ==
+                          DriverConnectionStatus.disconnected)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                          child: _DriverDisconnectedNotice(
+                            onRetry: _retryConnection,
+                          ),
+                        ),
+                      Expanded(
+                        child: TabBarView(
+                          physics: const NeverScrollableScrollPhysics(),
+                          children: [
+                            _buildTabContent(_buildFinderConsole(context)),
+                            _buildTabContent(_buildCommandConsole(context)),
+                            _buildTabContent(_buildRequestDataConsole(context)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -522,13 +824,29 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
   }
 
   Widget _buildTabContent(Widget console) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-      children: [
-        console,
-        const SizedBox(height: 12),
-        _HistoryPanel(entries: _history, onClear: _clearHistory),
-      ],
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          console,
+          const SizedBox(height: 8),
+          _HistoryPanel(entries: _history),
+        ],
+      ),
+    );
+  }
+
+  void _insertFinderSuggestion(
+    FinderCompletionContext context,
+    FinderCompletionItem item,
+  ) {
+    final current = _finderEditor.value;
+    final edit = context.apply(item, current.text);
+    _finderEditor.value = TextEditingValue(
+      text: edit.text,
+      selection: TextSelection.collapsed(offset: edit.selectionOffset),
+      composing: TextRange.empty,
     );
   }
 
@@ -538,34 +856,34 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     );
     final canExecute = _controller.status == DriverConnectionStatus.connected;
     return _ConsoleCard(
-      title: 'FINDER',
-      subtitle: 'Verify a Finder JSON payload against the running app.',
-      isProcessing: isProcessing,
-      editor: _JsonEditor(
-        automationKey: const ValueKey<String>('driver_automation.finder_input'),
-        controller: _finderEditor,
-        errorText: _finderError,
-        statusText: _finderSchemaMessage,
-      ),
-      actions: [
+      title: 'Finder',
+      headerActions: [
         DevToolsButton(
           key: const ValueKey<String>('driver_automation.finder_schema_button'),
-          onPressed:
-              () => _openSchemaBrowser(
-                context,
-                kind: ProtocolSchemaKind.finder,
-                editor: _finderEditor,
-                clearError: (error) => _finderError = error,
-                clearSchemaMessage: (message) => _finderSchemaMessage = message,
-              ),
+          onPressed: () => _openFinderSchemaBrowser(context),
           icon: Icons.menu_book_outlined,
           label: 'Schemas',
         ),
+      ],
+      isProcessing: isProcessing,
+      editor: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _FinderModeToggle(mode: _finderState.mode, onChanged: _setFinderMode),
+          const SizedBox(height: 6),
+          _FinderEditor(
+            mode: _finderState.mode,
+            controller: _finderEditor,
+            errorText: _finderError,
+            statusText: _finderSchemaMessage,
+            onSuggestion: _insertFinderSuggestion,
+          ),
+        ],
+      ),
+      actions: [
         DevToolsButton(
           key: const ValueKey<String>('driver_automation.finder_format_button'),
-          onPressed:
-              () =>
-                  _formatEditor(_finderEditor, (error) => _finderError = error),
+          onPressed: _formatFinder,
           label: 'Format',
         ),
         DevToolsButton(
@@ -578,13 +896,7 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
         ),
         DevToolsButton(
           key: const ValueKey<String>('driver_automation.finder_reset_button'),
-          onPressed:
-              () => _confirmReset(
-                context,
-                editor: _finderEditor,
-                template: _session.finderResetTemplate,
-                setError: (error) => _finderError = error,
-              ),
+          onPressed: () => _confirmFinderReset(context),
           icon: Icons.restart_alt,
           label: 'Reset',
         ),
@@ -688,7 +1000,7 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     final canExecute = _controller.status == DriverConnectionStatus.connected;
     return _ConsoleCard(
       title: 'REQUEST DATA',
-      subtitle: 'Send a JSON object through Flutter Driver requestData.',
+      subtitle: 'Send an object through Flutter Driver requestData.',
       isProcessing: isProcessing,
       editor: _JsonEditor(
         automationKey: const ValueKey<String>(
@@ -769,9 +1081,10 @@ class HistoryEntry {
 }
 
 class _ConnectionHeader extends StatelessWidget {
-  const _ConnectionHeader({required this.status});
+  const _ConnectionHeader({required this.status, required this.compact});
 
   final DriverConnectionStatus status;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -803,22 +1116,27 @@ class _ConnectionHeader extends StatelessWidget {
       ),
     };
 
-    return Padding(
-      key: const ValueKey<String>('driver_automation.connection_status_label'),
-      padding: const EdgeInsets.only(left: 12),
-      child: Row(
-        children: [
-          Icon(icon, size: 13, color: color),
-          const SizedBox(width: 7),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
+    return Tooltip(
+      message: label,
+      child: Padding(
+        key: const ValueKey<String>(
+          'driver_automation.connection_status_label',
+        ),
+        padding: const EdgeInsets.only(left: 12),
+        child: Row(
+          children: [
+            Icon(icon, size: 13, color: color),
+            const SizedBox(width: 7),
+            Text(
+              compact ? label.split(' · ').first : label,
+              style: TextStyle(
+                color: color,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -918,7 +1236,8 @@ class _Notice extends StatelessWidget {
 class _ConsoleCard extends StatelessWidget {
   const _ConsoleCard({
     required this.title,
-    required this.subtitle,
+    this.subtitle,
+    this.headerActions = const [],
     required this.isProcessing,
     required this.editor,
     required this.actions,
@@ -926,7 +1245,8 @@ class _ConsoleCard extends StatelessWidget {
   });
 
   final String title;
-  final String subtitle;
+  final String? subtitle;
+  final List<Widget> headerActions;
   final bool isProcessing;
   final Widget editor;
   final List<Widget> actions;
@@ -950,28 +1270,26 @@ class _ConsoleCard extends StatelessWidget {
             roundedTopBorder: false,
             includeTopBorder: false,
             includeBottomBorder: true,
+            actions: headerActions,
           ),
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(subtitle, style: Theme.of(context).subtleTextStyle),
-                const SizedBox(height: 12),
+                if (subtitle != null) ...[
+                  Text(subtitle!, style: Theme.of(context).subtleTextStyle),
+                  const SizedBox(height: 6),
+                ],
                 if (isProcessing) ...[
                   const LinearProgressIndicator(),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                 ],
                 editor,
-                const SizedBox(height: 10),
-                Wrap(
-                  alignment: WrapAlignment.end,
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: actions,
-                ),
+                const SizedBox(height: 6),
+                _ActionToolbar(actions: actions),
                 if (result != null) ...[
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 10),
                   _ResultPanel(result: result!),
                 ],
               ],
@@ -979,6 +1297,49 @@ class _ConsoleCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ActionToolbar extends StatelessWidget {
+  const _ActionToolbar({required this.actions});
+
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    if (actions.length < 2) {
+      return Align(alignment: Alignment.centerRight, child: actions.first);
+    }
+
+    final secondaryActions = actions.sublist(0, actions.length - 1);
+    final primaryAction = actions.last;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final secondary = Wrap(
+          alignment: WrapAlignment.start,
+          spacing: 6,
+          runSpacing: 6,
+          children: secondaryActions,
+        );
+        if (constraints.maxWidth >= 560) {
+          return Row(
+            children: [
+              Expanded(child: secondary),
+              const SizedBox(width: 8),
+              primaryAction,
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            secondary,
+            const SizedBox(height: 6),
+            Align(alignment: Alignment.centerRight, child: primaryAction),
+          ],
+        );
+      },
     );
   }
 }
@@ -1039,8 +1400,8 @@ class _JsonEditor extends StatelessWidget {
     return TextField(
       key: automationKey,
       controller: controller,
-      minLines: 5,
-      maxLines: 14,
+      minLines: 4,
+      maxLines: 10,
       keyboardType: TextInputType.multiline,
       style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
       decoration: InputDecoration(
@@ -1055,6 +1416,634 @@ class _JsonEditor extends StatelessWidget {
         border: const OutlineInputBorder(),
       ),
     );
+  }
+}
+
+class _FinderModeToggle extends StatelessWidget {
+  const _FinderModeToggle({required this.mode, required this.onChanged});
+
+  final FinderEditorMode mode;
+  final ValueChanged<FinderEditorMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return ToggleButtons(
+      isSelected: [mode == FinderEditorMode.dsl, mode == FinderEditorMode.json],
+      onPressed:
+          (index) => onChanged(
+            index == 0 ? FinderEditorMode.dsl : FinderEditorMode.json,
+          ),
+      constraints: const BoxConstraints(minHeight: 30, minWidth: 38),
+      children: [
+        KeyedSubtree(
+          key: const ValueKey<String>('driver_automation.finder_mode_dsl'),
+          child: const Text('DSL'),
+        ),
+        KeyedSubtree(
+          key: const ValueKey<String>('driver_automation.finder_mode_json'),
+          child: const Text('JSON'),
+        ),
+      ],
+    );
+  }
+}
+
+class _FinderEditor extends StatefulWidget {
+  const _FinderEditor({
+    required this.mode,
+    required this.controller,
+    required this.errorText,
+    required this.statusText,
+    required this.onSuggestion,
+  });
+
+  final FinderEditorMode mode;
+  final FinderTextEditingController controller;
+  final String? errorText;
+  final String? statusText;
+  final void Function(FinderCompletionContext, FinderCompletionItem)
+  onSuggestion;
+
+  @override
+  State<_FinderEditor> createState() => _FinderEditorState();
+}
+
+class _FinderEditorState extends State<_FinderEditor> {
+  final _fieldKey = GlobalKey();
+  final _focusNode = FocusNode();
+  final _layerLink = LayerLink();
+  final _overlayController = OverlayPortalController(
+    debugLabel: 'finder-completion-popup',
+  );
+
+  FinderCompletionContext _context = const FinderCompletionContext(
+    prefix: '',
+    replacementStart: 0,
+    replacementEnd: 0,
+    items: [],
+  );
+  Offset _popupOffset = Offset.zero;
+  double _popupWidth = 320;
+  double _popupMaxHeight = 272;
+  bool _openUp = false;
+  bool _explicit = false;
+  int _selectedIndex = 0;
+  int _refreshToken = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onControllerChanged);
+    _focusNode.addListener(_onFocusChanged);
+    _recomputeContext();
+  }
+
+  @override
+  void didUpdateWidget(_FinderEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.controller, widget.controller)) {
+      oldWidget.controller.removeListener(_onControllerChanged);
+      widget.controller.addListener(_onControllerChanged);
+    }
+    if (oldWidget.mode != widget.mode) {
+      _explicit = false;
+      _selectedIndex = 0;
+      _recomputeContext();
+      _scheduleRefresh();
+    }
+  }
+
+  @override
+  void dispose() {
+    _hideCompletionPopup();
+    widget.controller.removeListener(_onControllerChanged);
+    _focusNode
+      ..removeListener(_onFocusChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _onControllerChanged() {
+    _explicit = false;
+    _selectedIndex = 0;
+    _recomputeContext();
+    _scheduleRefresh();
+  }
+
+  void _onFocusChanged() {
+    _scheduleRefresh();
+  }
+
+  void _recomputeContext() {
+    if (widget.mode != FinderEditorMode.dsl) {
+      _context = const FinderCompletionContext(
+        prefix: '',
+        replacementStart: 0,
+        replacementEnd: 0,
+        items: [],
+      );
+      return;
+    }
+    final selection = widget.controller.selection;
+    final caret =
+        selection.isValid
+            ? selection.extentOffset
+            : widget.controller.text.length;
+    _context = FinderCompletionContextAnalyzer.analyze(
+      widget.controller.text,
+      caret,
+      explicit: _explicit,
+    );
+  }
+
+  void _showExplicitCompletion() {
+    if (widget.mode != FinderEditorMode.dsl) return;
+    _explicit = true;
+    _recomputeContext();
+    _selectedIndex = 0;
+    _scheduleRefresh();
+  }
+
+  void _moveSelection(int delta) {
+    if (!_canShowPopup || _context.items.isEmpty) return;
+    setState(() {
+      _selectedIndex = (_selectedIndex + delta).clamp(
+        0,
+        _context.items.length - 1,
+      );
+    });
+  }
+
+  void _acceptSelection() {
+    if (!_canShowPopup || _context.items.isEmpty) return;
+    final item = _context.items[_selectedIndex];
+    widget.onSuggestion(_context, item);
+    _explicit = false;
+    _focusNode.requestFocus();
+    _scheduleRefresh();
+  }
+
+  void _dismissCompletion() {
+    _explicit = false;
+    _hideCompletionPopup();
+    if (mounted) setState(() {});
+  }
+
+  void _hideCompletionPopup() {
+    if (_overlayController.isShowing) {
+      _overlayController.hide();
+    }
+  }
+
+  bool get _canShowPopup =>
+      widget.mode == FinderEditorMode.dsl &&
+      _focusNode.hasFocus &&
+      (_context.items.isNotEmpty || _context.signature != null);
+
+  void _scheduleRefresh() {
+    final token = ++_refreshToken;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || token != _refreshToken) return;
+      _updatePopupAnchor();
+      if (_canShowPopup) {
+        _overlayController.show();
+      } else {
+        _hideCompletionPopup();
+      }
+    });
+  }
+
+  void _updatePopupAnchor() {
+    final field = _fieldKey.currentContext?.findRenderObject();
+    final fieldBox = field is RenderBox ? field : null;
+    final editable = _findRenderEditable(field);
+    if (fieldBox == null || editable == null || !fieldBox.hasSize) return;
+
+    final selection = widget.controller.selection;
+    final caretOffset =
+        selection.isValid
+            ? selection.extentOffset.clamp(0, widget.controller.text.length)
+            : widget.controller.text.length;
+    final caret = editable.getLocalRectForCaret(
+      TextPosition(offset: caretOffset),
+    );
+    final globalTop = editable.localToGlobal(caret.topLeft);
+    final globalBottom = editable.localToGlobal(caret.bottomLeft);
+    final localTop = fieldBox.globalToLocal(globalTop);
+    final localBottom = fieldBox.globalToLocal(globalBottom);
+    final viewport = MediaQuery.sizeOf(context);
+    final availableWidth = math.max(180.0, viewport.width - 16);
+    final width = math.min(360.0, math.max(240.0, fieldBox.size.width));
+    _popupWidth = math.min(width, availableWidth);
+
+    final spaceBelow = viewport.height - globalBottom.dy;
+    final spaceAbove = globalTop.dy;
+    _openUp = spaceBelow < 272 && spaceAbove > spaceBelow;
+    final availableHeight = math.max(
+      88.0,
+      (_openUp ? spaceAbove : spaceBelow) - 8,
+    );
+    _popupMaxHeight = math.min(272.0, availableHeight);
+
+    final anchor = _openUp ? localTop : localBottom;
+    var popupGlobalX = globalBottom.dx;
+    if (popupGlobalX + _popupWidth > viewport.width - 8) {
+      popupGlobalX = viewport.width - 8 - _popupWidth;
+    }
+    popupGlobalX = math.max(8.0, popupGlobalX);
+    final dx = anchor.dx + popupGlobalX - globalBottom.dx;
+    final nextOffset = Offset(dx, anchor.dy);
+    if (nextOffset != _popupOffset && mounted) {
+      setState(() => _popupOffset = nextOffset);
+    }
+  }
+
+  RenderEditable? _findRenderEditable(RenderObject? object) {
+    if (object is RenderEditable) return object;
+    RenderEditable? result;
+    object?.visitChildren((child) {
+      result ??= _findRenderEditable(child);
+    });
+    return result;
+  }
+
+  Widget _buildTextField(BuildContext context) {
+    final modeKey =
+        widget.mode == FinderEditorMode.dsl
+            ? 'driver_automation.finder_dsl_input'
+            : 'driver_automation.finder_json_input';
+    return KeyedSubtree(
+      key: ValueKey<String>(modeKey),
+      child: CompositedTransformTarget(
+        link: _layerLink,
+        child: Container(
+          key: _fieldKey,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (_) {
+              _scheduleRefresh();
+              return false;
+            },
+            child: TextField(
+              key: const ValueKey<String>('driver_automation.finder_input'),
+              controller: widget.controller,
+              focusNode: _focusNode,
+              minLines: 4,
+              maxLines: 8,
+              keyboardType: TextInputType.multiline,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+              decoration: InputDecoration(
+                alignLabelWithHint: true,
+                hintText:
+                    widget.mode == FinderEditorMode.dsl
+                        ? 'type("Column").first()'
+                        : '{ ... }',
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                errorText: widget.errorText,
+                helperText: widget.statusText,
+                helperStyle:
+                    widget.statusText == null
+                        ? null
+                        : TextStyle(
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                border: const OutlineInputBorder(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Shortcuts(
+          shortcuts: <ShortcutActivator, Intent>{
+            const SingleActivator(LogicalKeyboardKey.arrowDown):
+                _FinderCompletionNextIntent(),
+            const SingleActivator(LogicalKeyboardKey.arrowUp):
+                _FinderCompletionPreviousIntent(),
+            const SingleActivator(LogicalKeyboardKey.enter):
+                _FinderCompletionAcceptIntent(),
+            const SingleActivator(LogicalKeyboardKey.numpadEnter):
+                _FinderCompletionAcceptIntent(),
+            const SingleActivator(LogicalKeyboardKey.tab):
+                _FinderCompletionAcceptIntent(),
+            const SingleActivator(LogicalKeyboardKey.escape):
+                _FinderCompletionDismissIntent(),
+            const SingleActivator(LogicalKeyboardKey.space, control: true):
+                _FinderCompletionShowIntent(),
+            const SingleActivator(LogicalKeyboardKey.space, meta: true):
+                _FinderCompletionShowIntent(),
+          },
+          child: Actions(
+            actions: <Type, Action<Intent>>{
+              _FinderCompletionNextIntent: _FinderCompletionAction(
+                enabled: () => _canShowPopup,
+                callback: () => _moveSelection(1),
+              ),
+              _FinderCompletionPreviousIntent: _FinderCompletionAction(
+                enabled: () => _canShowPopup,
+                callback: () => _moveSelection(-1),
+              ),
+              _FinderCompletionAcceptIntent: _FinderCompletionAction(
+                enabled: () => _canShowPopup,
+                callback: _acceptSelection,
+              ),
+              _FinderCompletionDismissIntent: _FinderCompletionAction(
+                enabled: () => _canShowPopup,
+                callback: _dismissCompletion,
+              ),
+              _FinderCompletionShowIntent: _FinderCompletionAction(
+                enabled: () => widget.mode == FinderEditorMode.dsl,
+                callback: _showExplicitCompletion,
+              ),
+            },
+            child: OverlayPortal.targetsRootOverlay(
+              controller: _overlayController,
+              overlayChildBuilder:
+                  (context) => CompositedTransformFollower(
+                    link: _layerLink,
+                    showWhenUnlinked: false,
+                    targetAnchor: Alignment.topLeft,
+                    followerAnchor:
+                        _openUp ? Alignment.bottomLeft : Alignment.topLeft,
+                    offset: _popupOffset + Offset(0, _openUp ? -4 : 4),
+                    child: TextFieldTapRegion(
+                      child: _FinderCompletionPopup(
+                        context: _context,
+                        selectedIndex: _selectedIndex,
+                        width: _popupWidth,
+                        maxHeight: _popupMaxHeight,
+                        onSelected: (index) {
+                          if (index >= 0 && index < _context.items.length) {
+                            widget.onSuggestion(
+                              _context,
+                              _context.items[index],
+                            );
+                            _focusNode.requestFocus();
+                            _scheduleRefresh();
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+              child: _buildTextField(context),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FinderCompletionNextIntent extends Intent {
+  const _FinderCompletionNextIntent();
+}
+
+class _FinderCompletionPreviousIntent extends Intent {
+  const _FinderCompletionPreviousIntent();
+}
+
+class _FinderCompletionAcceptIntent extends Intent {
+  const _FinderCompletionAcceptIntent();
+}
+
+class _FinderCompletionDismissIntent extends Intent {
+  const _FinderCompletionDismissIntent();
+}
+
+class _FinderCompletionShowIntent extends Intent {
+  const _FinderCompletionShowIntent();
+}
+
+class _FinderCompletionAction<T extends Intent> extends Action<T> {
+  _FinderCompletionAction({required this.enabled, required this.callback});
+
+  final bool Function() enabled;
+  final VoidCallback callback;
+
+  @override
+  bool get isActionEnabled => enabled();
+
+  @override
+  Object? invoke(T intent) {
+    if (enabled()) callback();
+    return null;
+  }
+}
+
+class _FinderCompletionPopup extends StatelessWidget {
+  const _FinderCompletionPopup({
+    required this.context,
+    required this.selectedIndex,
+    required this.width,
+    required this.maxHeight,
+    required this.onSelected,
+  });
+
+  final FinderCompletionContext context;
+  final int selectedIndex;
+  final double width;
+  final double maxHeight;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext _) {
+    const popupColor = Color(0xEB171A1F);
+    final borderColor = Colors.white.withValues(alpha: 0.13);
+    return UnconstrainedBox(
+      alignment: Alignment.topLeft,
+      child: SizedBox(
+        width: width,
+        child: Material(
+          key: const ValueKey<String>(
+            'driver_automation.finder_completion_popup',
+          ),
+          elevation: 4,
+          shadowColor: Colors.black.withValues(alpha: 0.32),
+          color: popupColor,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(7),
+            side: BorderSide(color: borderColor),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxHeight),
+            child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              shrinkWrap: true,
+              children: [
+                if (context.items.isEmpty && context.signature != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(9, 5, 9, 5),
+                    child: Text(
+                      context.signature!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                for (var index = 0; index < context.items.length; index++)
+                  _buildItem(index),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildItem(int index) {
+    final item = context.items[index];
+    final selected = index == selectedIndex;
+    return InkWell(
+      key: ValueKey<String>(
+        'driver_automation.finder_suggestion_${item.label}',
+      ),
+      onTap: () => onSelected(index),
+      hoverColor: Colors.white.withValues(alpha: 0.06),
+      splashColor: Colors.white.withValues(alpha: 0.10),
+      child: Container(
+        color: selected ? Colors.white.withValues(alpha: 0.10) : null,
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _CompletionLabel(
+              label: item.label,
+              signature: item.signature,
+              prefix: context.prefix,
+              selected: selected,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              item.description,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.58),
+                fontSize: 11,
+                height: 1.1,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CompletionLabel extends StatelessWidget {
+  const _CompletionLabel({
+    required this.label,
+    required this.signature,
+    required this.prefix,
+    required this.selected,
+  });
+
+  final String label;
+  final String signature;
+  final String prefix;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final length = math.min(prefix.length, label.length);
+    final color =
+        selected ? Theme.of(context).colorScheme.primary : Colors.white;
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(
+            text: label.substring(0, length),
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: selected ? color : null,
+            ),
+          ),
+          TextSpan(
+            text: label.substring(length),
+            style: const TextStyle(color: Colors.white),
+          ),
+          TextSpan(
+            text: '  $signature',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.70),
+              fontFamily: 'monospace',
+              fontSize: 11,
+              fontWeight: FontWeight.normal,
+            ),
+          ),
+        ],
+        style: const TextStyle(fontSize: 13, height: 1.1),
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+}
+
+class FinderTextEditingController extends TextEditingController {
+  FinderTextEditingController({super.text, required this.mode});
+
+  FinderEditorMode mode;
+
+  static final _dslTokenPattern = FinderCompletionRegistry.dslTokenPattern;
+  static final _jsonTokenPattern = RegExp(
+    r'"(?:\\.|[^"\\])*"(?=\s*:)|"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?|true|false|null',
+  );
+
+  @override
+  TextSpan buildTextSpan({
+    required BuildContext context,
+    TextStyle? style,
+    required bool withComposing,
+  }) {
+    final baseStyle = style ?? DefaultTextStyle.of(context).style;
+    final children = <TextSpan>[];
+    var cursor = 0;
+    final tokenPattern =
+        mode == FinderEditorMode.dsl ? _dslTokenPattern : _jsonTokenPattern;
+    for (final match in tokenPattern.allMatches(text)) {
+      if (match.start > cursor) {
+        children.add(TextSpan(text: text.substring(cursor, match.start)));
+      }
+      final token = match.group(0)!;
+      final isKey =
+          mode == FinderEditorMode.json &&
+          match.end < text.length &&
+          text[match.end] == ':';
+      final color =
+          isKey
+              ? Colors.lightBlueAccent
+              : token.startsWith('"')
+              ? Colors.lightGreenAccent
+              : token == 'true' || token == 'false'
+              ? Colors.orangeAccent
+              : token == 'null'
+              ? Colors.purpleAccent
+              : Colors.amberAccent;
+      children.add(
+        TextSpan(text: token, style: baseStyle.copyWith(color: color)),
+      );
+      cursor = match.end;
+    }
+    if (cursor < text.length) {
+      children.add(TextSpan(text: text.substring(cursor)));
+    }
+    return TextSpan(style: baseStyle, children: children);
   }
 }
 
@@ -1119,11 +2108,16 @@ class _ResultPanel extends StatelessWidget {
             ? (result.response as Map<String, dynamic>)['message']
             : result.response;
 
+    final responseText =
+        response == null
+            ? 'No response body returned.'
+            : JsonPayloads.displayResponse(response);
+
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLow,
-        border: Border.all(color: colorScheme.outlineVariant),
+        border: Border(top: BorderSide(color: colorScheme.outlineVariant)),
         borderRadius: BorderRadius.circular(8),
       ),
       clipBehavior: Clip.antiAlias,
@@ -1131,7 +2125,7 @@ class _ResultPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
             child: Row(
               children: [
                 Icon(Icons.data_object, size: 18, color: colorScheme.primary),
@@ -1156,36 +2150,38 @@ class _ResultPanel extends StatelessWidget {
           ),
           if (result.success)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: _ResultSection(
-                label: 'Response',
-                icon: Icons.output,
-                child: _ResponseCodeBlock(
-                  response == null
-                      ? 'No response body returned.'
-                      : JsonPayloads.displayResponse(response),
-                  muted: response == null,
-                ),
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: _ResponseCodeBlock(
+                      responseText,
+                      muted: response == null,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  _CopyResultButton(text: responseText),
+                ],
               ),
             )
           else
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
               child: _ResultError(message: result.error ?? 'Unknown error'),
             ),
           Divider(height: 1, color: colorScheme.outlineVariant),
           ExpansionTile(
-            tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            tilePadding: const EdgeInsets.symmetric(horizontal: 10),
+            childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
             title: const Text('Raw details'),
-            subtitle: const Text('Request and transport response'),
             children: [
               LayoutBuilder(
                 builder: (context, constraints) {
                   final request = _RawPayloadCard(
-                    label: 'Raw request',
+                    label: 'Canonical input',
                     icon: Icons.call_made,
-                    value: result.rawRequest,
+                    value: _canonicalInput(result),
                   );
                   final response = _RawPayloadCard(
                     label: 'Raw response',
@@ -1212,6 +2208,13 @@ class _ResultPanel extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _canonicalInput(DriverExecutionResult result) {
+    final payload = result.request.payload;
+    return payload == null
+        ? result.request.rawInput
+        : JsonPayloads.displayResponse(payload);
   }
 }
 
@@ -1258,32 +2261,18 @@ class _ResultStatusChip extends StatelessWidget {
   }
 }
 
-class _ResultSection extends StatelessWidget {
-  const _ResultSection({
-    required this.label,
-    required this.icon,
-    required this.child,
-  });
+class _CopyResultButton extends StatelessWidget {
+  const _CopyResultButton({required this.text});
 
-  final String label;
-  final IconData icon;
-  final Widget child;
+  final String text;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(icon, size: 16, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 6),
-            _ResultLabel(label),
-          ],
-        ),
-        const SizedBox(height: 8),
-        child,
-      ],
+    return DevToolsButton(
+      key: const ValueKey<String>('driver_automation.result_copy_button'),
+      icon: Icons.copy_outlined,
+      tooltip: 'Copy response',
+      onPressed: () => Clipboard.setData(ClipboardData(text: text)),
     );
   }
 }
@@ -1298,7 +2287,7 @@ class _ResultError extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: colorScheme.errorContainer.withValues(alpha: .45),
         border: Border.all(color: colorScheme.error.withValues(alpha: .35)),
@@ -1352,7 +2341,7 @@ class _RawPayloadCard extends StatelessWidget {
         border: Border.all(color: colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(6),
       ),
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1393,7 +2382,7 @@ class _ResponseCodeBlock extends StatelessWidget {
     return Container(
       width: double.infinity,
       constraints: BoxConstraints(maxHeight: maxHeight),
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: colorScheme.surface,
         border: Border.all(color: colorScheme.outlineVariant),
@@ -1448,50 +2437,60 @@ class _ResponseText extends StatelessWidget {
 }
 
 class _HistoryPanel extends StatelessWidget {
-  const _HistoryPanel({required this.entries, required this.onClear});
+  const _HistoryPanel({required this.entries});
 
   final List<HistoryEntry> entries;
-  final VoidCallback onClear;
 
   @override
   Widget build(BuildContext context) {
     return RoundedOutlinedBorder(
       clip: true,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          AreaPaneHeader(
-            title: const Text('HISTORY'),
-            roundedTopBorder: false,
-            includeTopBorder: false,
-            includeBottomBorder: true,
-            actions: [
-              DevToolsButton(
-                key: const ValueKey<String>(
-                  'driver_automation.history_clear_button',
+      child: ExpansionTile(
+        initiallyExpanded: false,
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+        childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+        title: Row(
+          children: [
+            const Text('History'),
+            const SizedBox(width: 4),
+            Text('(${entries.length})'),
+            if (entries.isNotEmpty) ...[
+              const Spacer(),
+              Flexible(
+                child: Text(
+                  'Latest: ${entries.first.label} · ${entries.first.summary}',
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).subtleTextStyle,
                 ),
-                icon: Icons.delete_outline,
-                label: 'Clear',
-                tooltip: 'Clear session history',
-                onPressed: entries.isEmpty ? null : onClear,
+              ),
+            ] else ...[
+              const Spacer(),
+              Flexible(
+                child: Text(
+                  'No operations in this session.',
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).subtleTextStyle,
+                ),
               ),
             ],
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (entries.isEmpty)
-                  Text(
-                    'No operations in this session.',
-                    style: Theme.of(context).subtleTextStyle,
-                  )
-                else
-                  for (final entry in entries) _HistoryTile(entry: entry),
-              ],
-            ),
-          ),
+          ],
+        ),
+        children: [
+          if (entries.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'No operations in this session.',
+                  style: Theme.of(context).subtleTextStyle,
+                ),
+              ),
+            )
+          else
+            for (final entry in entries.reversed) _HistoryTile(entry: entry),
         ],
       ),
     );
@@ -1541,11 +2540,15 @@ class _HistoryTile extends StatelessWidget {
         const SizedBox(height: 8),
         const Align(
           alignment: Alignment.centerLeft,
-          child: _ResultLabel('Raw Request'),
+          child: _ResultLabel('Canonical Input'),
         ),
         Align(
           alignment: Alignment.centerLeft,
-          child: _ResponseText(result.rawRequest),
+          child: _ResponseText(
+            result.request.payload == null
+                ? result.request.rawInput
+                : JsonPayloads.displayResponse(result.request.payload!),
+          ),
         ),
         const SizedBox(height: 8),
         const Align(

@@ -5,7 +5,7 @@ hiện tại của Flutter DevTools.
 
 Extension cung cấp ba console độc lập:
 
-- Finder JSON → Verify
+- Finder DSL or Canonical JSON → Verify
 - Command JSON → Execute
 - RequestData JSON → Send
 
@@ -17,6 +17,24 @@ Mỗi lần mở hoặc reset template sẽ tạo một `requestId` UUID v4 mớ
 Session history có thể xoá bằng nút `Clear` trong panel `HISTORY`; nội dung
 editor, schema reset, kết quả và tab hiện tại được giữ lại khi extension page
 được tạo lại.
+
+Finder editor mặc định dùng Finder DSL; tab `JSON` vẫn nhận Canonical Finder
+JSON cũ và custom finder. DSL hỗ trợ các root finder như `type`, `key`, `text`,
+`textMatch`, `semanticsLabel`, `semanticsId`, `tooltip`, `tooltipText`,
+`pageBack` và chain `descendant`, `ancestor`, `containing`, `first`, `last`,
+`at`. Ví dụ:
+
+```text
+type("Column")
+  .descendant(text("Login"))
+  .ancestor(type("InkWell"))
+  .first()
+```
+
+Canonical Finder JSON là representation duy nhất của finder state. Flutter
+Driver JSON chỉ được tạo ở transport boundary và không xuất hiện trong editor
+hay history. Draft DSL và JSON độc lập; draft lỗi không thay thế finder hợp lệ
+đã commit và không thể được Verify.
 
 Finder và Command editor có `Schemas` để xem built-in protocol schema,
 property, kiểu dữ liệu, field bắt buộc, enum/constant và example JSON. Example

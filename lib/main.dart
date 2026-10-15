@@ -6,6 +6,8 @@ import 'src/driver_automation_page.dart';
 
 export 'src/driver_automation_core.dart';
 export 'src/driver_automation_page.dart';
+export 'src/finder_dsl.dart';
+export 'src/finder_editor.dart';
 export 'src/driver_automation_service.dart';
 export 'src/java_finder_generator.dart';
 export 'src/protocol/schema/command_schema.dart';
