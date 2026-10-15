@@ -51,6 +51,16 @@ void main() {
     expect(context.apply(item, source).text, contains('contains'));
   });
 
+  test('offers boolean values for the optional semantics label flag', () {
+    const source = 'semanticsLabel("Login", ';
+    final context = FinderCompletionContextAnalyzer.analyze(
+      source,
+      source.length,
+    );
+
+    expect(context.items.map((item) => item.label), ['true', 'false']);
+  });
+
   test('provides a parameter signature inside an incomplete call', () {
     const source = 'textMatch("Login", ';
     final context = FinderCompletionContextAnalyzer.analyze(

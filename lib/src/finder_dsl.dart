@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'finder_dsl_metadata.dart';
 import 'protocol/schema/protocol_schema_registry.dart';
 
 /// The parsed, temporary representation of a Finder DSL expression.
@@ -146,82 +147,69 @@ class FinderDslCodec {
     String name,
     List<FinderAstValue> arguments,
   ) {
-    switch (name) {
-      case 'type':
-        _expectCount(name, arguments, 1);
+    final definition = _definition(name, FinderDslMemberKind.root);
+    _validateArguments(definition, arguments);
+    switch (definition.mapping) {
+      case FinderDslMappingKind.byType:
         return {
-          'finderType': 'ByType',
-          'type': _stringArgument(name, arguments, 0),
+          'finderType': definition.finderType,
+          'type': _stringArgument(definition, arguments, 0),
         };
-      case 'key':
-        _expectCount(name, arguments, 1);
+      case FinderDslMappingKind.valueKey:
         final value = arguments.single;
         return switch (value) {
           FinderAstStringValue() => {
-            'finderType': 'ByValueKey',
+            'finderType': definition.finderType,
             'keyValueString': value.value,
             'keyValueType': 'String',
           },
           FinderAstIntegerValue() => {
-            'finderType': 'ByValueKey',
+            'finderType': definition.finderType,
             'keyValueString': value.value.toString(),
             'keyValueType': 'int',
           },
-          _ => throw _argumentError(name, 0, 'a string or integer'),
+          _ => throw _argumentError(definition.name, 0, 'a string or integer'),
         };
-      case 'text':
-        _expectCount(name, arguments, 1);
+      case FinderDslMappingKind.byText:
         return {
-          'finderType': 'ByText',
-          'text': _stringArgument(name, arguments, 0),
+          'finderType': definition.finderType,
+          'text': _stringArgument(definition, arguments, 0),
         };
-      case 'textMatch':
-        if (arguments.length < 2 || arguments.length > 3) {
-          throw _countError(name, '2 or 3');
-        }
+      case FinderDslMappingKind.textMatch:
         final result = <String, dynamic>{
-          'finderType': 'ByTextMatch',
-          'text': _stringArgument(name, arguments, 0),
-          'matchType': _enumArgument(name, arguments, 1),
+          'finderType': definition.finderType,
+          'text': _stringArgument(definition, arguments, 0),
+          'matchType': _enumArgument(definition, arguments, 1),
         };
         if (arguments.length == 3) {
-          result['ignoreCase'] = _boolArgument(name, arguments, 2);
+          result['ignoreCase'] = _boolArgument(definition, arguments, 2);
         }
         return result;
-      case 'semanticsLabel':
-        if (arguments.isEmpty || arguments.length > 2) {
-          throw _countError(name, '1 or 2');
-        }
+      case FinderDslMappingKind.semanticsLabel:
         final result = <String, dynamic>{
-          'finderType': 'BySemanticsLabel',
-          'label': _stringArgument(name, arguments, 0),
+          'finderType': definition.finderType,
+          'label': _stringArgument(definition, arguments, 0),
         };
         if (arguments.length == 2) {
-          result['isRegExp'] = _boolArgument(name, arguments, 1);
+          result['isRegExp'] = _boolArgument(definition, arguments, 1);
         }
         return result;
-      case 'semanticsId':
-        _expectCount(name, arguments, 1);
+      case FinderDslMappingKind.semanticsIdentifier:
         return {
-          'finderType': 'BySemanticsIdentifier',
-          'identifier': _stringArgument(name, arguments, 0),
+          'finderType': definition.finderType,
+          'identifier': _stringArgument(definition, arguments, 0),
         };
-      case 'tooltip':
-        _expectCount(name, arguments, 1);
+      case FinderDslMappingKind.tooltipMessage:
+      case FinderDslMappingKind.tooltip:
         return {
-          'finderType': 'ByTooltipMessage',
-          'text': _stringArgument(name, arguments, 0),
+          'finderType': definition.finderType,
+          'text': _stringArgument(definition, arguments, 0),
         };
-      case 'tooltipText':
-        _expectCount(name, arguments, 1);
-        return {
-          'finderType': 'ByTooltip',
-          'text': _stringArgument(name, arguments, 0),
-        };
-      case 'pageBack':
-        _expectCount(name, arguments, 0);
-        return {'finderType': 'PageBack'};
-      default:
+      case FinderDslMappingKind.pageBack:
+        return {'finderType': definition.finderType};
+      case FinderDslMappingKind.relation:
+      case FinderDslMappingKind.containing:
+      case FinderDslMappingKind.matchPosition:
         throw FinderDslException('Unsupported finder function "$name".');
     }
   }
@@ -230,59 +218,65 @@ class FinderDslCodec {
     Map<String, dynamic> base,
     FinderAstCall call,
   ) {
-    switch (call.name) {
-      case 'descendant':
-      case 'ancestor':
-        if (call.arguments.length != 1 && call.arguments.length != 3) {
-          throw _countError(call.name, '1 or 3');
-        }
+    final definition = _definition(call.name, FinderDslMemberKind.chain);
+    _validateArguments(definition, call.arguments);
+    switch (definition.mapping) {
+      case FinderDslMappingKind.relation:
         final matching = _lowerExpression(
-          _finderArgument(call.name, call.arguments, 0),
+          _finderArgument(definition, call.arguments, 0),
         );
         final result = <String, dynamic>{
-          'finderType': call.name == 'descendant' ? 'Descendant' : 'Ancestor',
+          'finderType': definition.finderType,
           'of': base,
           'matching': matching,
         };
         if (call.arguments.length == 3) {
-          result['matchRoot'] = _boolArgument(call.name, call.arguments, 1);
+          result['matchRoot'] = _boolArgument(definition, call.arguments, 1);
           result['firstMatchOnly'] = _boolArgument(
-            call.name,
+            definition,
             call.arguments,
             2,
           );
         }
         return result;
-      case 'containing':
-        _expectCallCount(call, 1);
+      case FinderDslMappingKind.containing:
         return {
-          'finderType': 'Ancestor',
-          'of': _lowerExpression(_finderArgument(call.name, call.arguments, 0)),
+          'finderType': definition.finderType,
+          'of': _lowerExpression(
+            _finderArgument(definition, call.arguments, 0),
+          ),
           'matching': base,
           'matchRoot': false,
           'firstMatchOnly': true,
         };
-      case 'first':
-      case 'last':
-        _expectCallCount(call, 0);
-        return {
-          'finderType': 'ByMatchPosition',
-          'position': call.name,
-          'of': base,
-        };
-      case 'at':
-        _expectCallCount(call, 1);
-        final index = _integerArgument(call.name, call.arguments, 0);
-        if (index < 0) {
-          throw _argumentError(call.name, 0, 'a non-negative integer');
+      case FinderDslMappingKind.matchPosition:
+        final position = definition.canonicalPosition;
+        if (position == 'index') {
+          final index = _integerArgument(definition, call.arguments, 0);
+          if (index < 0) {
+            throw _argumentError(definition.name, 0, 'a non-negative integer');
+          }
+          return {
+            'finderType': definition.finderType,
+            'position': position,
+            'index': index,
+            'of': base,
+          };
         }
         return {
-          'finderType': 'ByMatchPosition',
-          'position': 'index',
-          'index': index,
+          'finderType': definition.finderType,
+          'position': position,
           'of': base,
         };
-      default:
+      case FinderDslMappingKind.byType:
+      case FinderDslMappingKind.valueKey:
+      case FinderDslMappingKind.byText:
+      case FinderDslMappingKind.textMatch:
+      case FinderDslMappingKind.semanticsLabel:
+      case FinderDslMappingKind.semanticsIdentifier:
+      case FinderDslMappingKind.tooltipMessage:
+      case FinderDslMappingKind.tooltip:
+      case FinderDslMappingKind.pageBack:
         throw FinderDslException('Unsupported finder method "${call.name}".');
     }
   }
@@ -296,24 +290,32 @@ class FinderDslCodec {
       );
     }
 
-    switch (type) {
-      case 'ByType':
-        return FinderAst('type', [
+    final definitions = FinderDslMetadataRegistry.forFinderType(type);
+    if (definitions.isEmpty) {
+      throw FinderDslException(
+        'Finder type "$type" is not representable in the DSL.',
+        path: 'finderType',
+      );
+    }
+    final definition = _definitionForCanonical(finder, definitions);
+    switch (definition.mapping) {
+      case FinderDslMappingKind.byType:
+        return FinderAst(definition.name, [
           FinderAstStringValue(_requiredString(finder, 'type', 'type')),
         ]);
-      case 'ByValueKey':
+      case FinderDslMappingKind.valueKey:
         final keyType = _requiredString(finder, 'keyValueType', 'keyValueType');
         final key = _requiredString(finder, 'keyValueString', 'keyValueString');
-        return FinderAst('key', [
+        return FinderAst(definition.name, [
           keyType == 'int'
               ? FinderAstIntegerValue(_parseInteger(key, 'keyValueString'))
               : FinderAstStringValue(key),
         ]);
-      case 'ByText':
-        return FinderAst('text', [
+      case FinderDslMappingKind.byText:
+        return FinderAst(definition.name, [
           FinderAstStringValue(_requiredString(finder, 'text', 'text')),
         ]);
-      case 'ByTextMatch':
+      case FinderDslMappingKind.textMatch:
         final arguments = <FinderAstValue>[
           FinderAstStringValue(_requiredString(finder, 'text', 'text')),
           FinderAstEnumValue(_requiredString(finder, 'matchType', 'matchType')),
@@ -323,8 +325,8 @@ class FinderDslCodec {
             FinderAstBooleanValue(_requiredBool(finder, 'ignoreCase')),
           );
         }
-        return FinderAst('textMatch', arguments);
-      case 'BySemanticsLabel':
+        return FinderAst(definition.name, arguments);
+      case FinderDslMappingKind.semanticsLabel:
         final arguments = <FinderAstValue>[
           FinderAstStringValue(_requiredString(finder, 'label', 'label')),
         ];
@@ -333,25 +335,21 @@ class FinderDslCodec {
             FinderAstBooleanValue(_requiredBool(finder, 'isRegExp')),
           );
         }
-        return FinderAst('semanticsLabel', arguments);
-      case 'BySemanticsIdentifier':
-        return FinderAst('semanticsId', [
+        return FinderAst(definition.name, arguments);
+      case FinderDslMappingKind.semanticsIdentifier:
+        return FinderAst(definition.name, [
           FinderAstStringValue(
             _requiredString(finder, 'identifier', 'identifier'),
           ),
         ]);
-      case 'ByTooltipMessage':
-        return FinderAst('tooltip', [
+      case FinderDslMappingKind.tooltipMessage:
+      case FinderDslMappingKind.tooltip:
+        return FinderAst(definition.name, [
           FinderAstStringValue(_requiredString(finder, 'text', 'text')),
         ]);
-      case 'ByTooltip':
-        return FinderAst('tooltipText', [
-          FinderAstStringValue(_requiredString(finder, 'text', 'text')),
-        ]);
-      case 'PageBack':
-        return FinderAst('pageBack', const []);
-      case 'Descendant':
-      case 'Ancestor':
+      case FinderDslMappingKind.pageBack:
+        return FinderAst(definition.name, const []);
+      case FinderDslMappingKind.relation:
         final base = _fromCanonical(_requiredFinder(finder, 'of'));
         final matching = FinderAstExpressionValue(
           _fromCanonical(_requiredFinder(finder, 'matching')),
@@ -366,7 +364,7 @@ class FinderDslCodec {
             firstMatchOnly == true;
         if (exactContaining) {
           return matching.value.append(
-            FinderAstCall('containing', [FinderAstExpressionValue(base)]),
+            FinderAstCall(definition.name, [FinderAstExpressionValue(base)]),
           );
         }
 
@@ -375,37 +373,79 @@ class FinderDslCodec {
           arguments.add(FinderAstBooleanValue(matchRoot == true));
           arguments.add(FinderAstBooleanValue(firstMatchOnly == true));
         }
-        return base.append(
-          FinderAstCall(
-            type == 'Descendant' ? 'descendant' : 'ancestor',
-            arguments,
-          ),
+        return base.append(FinderAstCall(definition.name, arguments));
+      case FinderDslMappingKind.containing:
+        final base = _fromCanonical(_requiredFinder(finder, 'of'));
+        final matching = _fromCanonical(_requiredFinder(finder, 'matching'));
+        return matching.append(
+          FinderAstCall(definition.name, [FinderAstExpressionValue(base)]),
         );
-      case 'ByMatchPosition':
+      case FinderDslMappingKind.matchPosition:
         final base = _fromCanonical(_requiredFinder(finder, 'of'));
         final position = _requiredString(finder, 'position', 'position');
-        switch (position) {
-          case 'first':
-          case 'last':
-            return base.append(FinderAstCall(position, const []));
-          case 'index':
-            return base.append(
-              FinderAstCall('at', [
-                FinderAstIntegerValue(_requiredInt(finder, 'index', 'index')),
-              ]),
-            );
-          default:
-            throw FinderDslException(
-              'Unsupported match position "$position".',
-              path: 'position',
-            );
+        if (position == 'index') {
+          return base.append(
+            FinderAstCall(definition.name, [
+              FinderAstIntegerValue(_requiredInt(finder, 'index', 'index')),
+            ]),
+          );
         }
-      default:
+        if (position == 'first' || position == 'last') {
+          return base.append(FinderAstCall(definition.name, const []));
+        }
         throw FinderDslException(
-          'Finder type "$type" is not representable in the DSL.',
-          path: 'finderType',
+          'Unsupported match position "$position".',
+          path: 'position',
         );
     }
+  }
+
+  static FinderDslDefinition _definition(
+    String name,
+    FinderDslMemberKind memberKind,
+  ) {
+    final definition = FinderDslMetadataRegistry.find(
+      name,
+      memberKind: memberKind,
+    );
+    if (definition == null) {
+      final kind =
+          memberKind == FinderDslMemberKind.root ? 'function' : 'method';
+      throw FinderDslException('Unsupported finder $kind "$name".');
+    }
+    return definition;
+  }
+
+  static FinderDslDefinition _definitionForCanonical(
+    Map<String, dynamic> finder,
+    List<FinderDslDefinition> definitions,
+  ) {
+    if (definitions.length == 1) return definitions.single;
+
+    for (final definition in definitions) {
+      if (definition.mapping == FinderDslMappingKind.containing &&
+          finder['matchRoot'] == false &&
+          finder['firstMatchOnly'] == true) {
+        return definition;
+      }
+      if (definition.mapping == FinderDslMappingKind.relation &&
+          !(finder['matchRoot'] == false && finder['firstMatchOnly'] == true)) {
+        return definition;
+      }
+    }
+    final position = finder['position'];
+    if (position is String) {
+      final definition = FinderDslMetadataRegistry.findByCanonicalPosition(
+        position,
+      );
+      if (definition != null && definitions.contains(definition)) {
+        return definition;
+      }
+    }
+    throw FinderDslException(
+      'Finder fields do not identify a supported DSL form.',
+      path: 'finderType',
+    );
   }
 
   static Map<String, dynamic> _requiredFinder(
@@ -474,32 +514,104 @@ class FinderDslCodec {
     return parsed;
   }
 
+  static void _validateArguments(
+    FinderDslDefinition definition,
+    List<FinderAstValue> arguments,
+  ) {
+    final required = definition.requiredArgumentCount;
+    final maximum = definition.arguments.length;
+    final validCount =
+        definition.mapping == FinderDslMappingKind.relation
+            ? arguments.length == 1 || arguments.length == 3
+            : arguments.length >= required && arguments.length <= maximum;
+    if (!validCount) {
+      final expected =
+          definition.mapping == FinderDslMappingKind.relation
+              ? '1 or 3'
+              : required == maximum
+              ? required.toString()
+              : '$required or $maximum';
+      throw _countError(definition.name, expected);
+    }
+
+    for (var index = 0; index < arguments.length; index++) {
+      final argument = definition.arguments[index];
+      final value = arguments[index];
+      final valid = switch (argument.kind) {
+        FinderDslArgumentKind.string => value is FinderAstStringValue,
+        FinderDslArgumentKind.integer => value is FinderAstIntegerValue,
+        FinderDslArgumentKind.boolean => value is FinderAstBooleanValue,
+        FinderDslArgumentKind.enumValue =>
+          value is FinderAstEnumValue || value is FinderAstStringValue,
+        FinderDslArgumentKind.finder => value is FinderAstExpressionValue,
+        FinderDslArgumentKind.stringOrInteger =>
+          value is FinderAstStringValue || value is FinderAstIntegerValue,
+      };
+      if (!valid) {
+        throw _argumentError(
+          definition.name,
+          index,
+          _argumentDescription(argument),
+        );
+      }
+      if (argument.kind == FinderDslArgumentKind.enumValue) {
+        final enumValue = switch (value) {
+          FinderAstEnumValue() => value.value,
+          FinderAstStringValue() => value.value,
+          _ => null,
+        };
+        if (!argument.enumValues.contains(enumValue)) {
+          throw _argumentError(
+            definition.name,
+            index,
+            argument.enumValues.join(', '),
+          );
+        }
+      }
+    }
+  }
+
+  static String _argumentDescription(FinderDslArgumentMetadata argument) {
+    return switch (argument.kind) {
+      FinderDslArgumentKind.string => 'a string',
+      FinderDslArgumentKind.integer => 'an integer',
+      FinderDslArgumentKind.boolean => 'a boolean',
+      FinderDslArgumentKind.enumValue => argument.enumValues.join(', '),
+      FinderDslArgumentKind.finder => 'a nested finder expression',
+      FinderDslArgumentKind.stringOrInteger => 'a string or integer',
+    };
+  }
+
   static FinderAst _finderArgument(
-    String name,
+    FinderDslDefinition definition,
     List<FinderAstValue> arguments,
     int index,
   ) {
     final value = arguments[index];
     if (value is! FinderAstExpressionValue) {
-      throw _argumentError(name, index, 'a nested finder expression');
+      throw _argumentError(
+        definition.name,
+        index,
+        'a nested finder expression',
+      );
     }
     return value.value;
   }
 
   static String _stringArgument(
-    String name,
+    FinderDslDefinition definition,
     List<FinderAstValue> arguments,
     int index,
   ) {
     final value = arguments[index];
     if (value is! FinderAstStringValue) {
-      throw _argumentError(name, index, 'a string');
+      throw _argumentError(definition.name, index, 'a string');
     }
     return value.value;
   }
 
   static String _enumArgument(
-    String name,
+    FinderDslDefinition definition,
     List<FinderAstValue> arguments,
     int index,
   ) {
@@ -509,60 +621,35 @@ class FinderDslCodec {
       FinderAstStringValue() => value.value,
       _ => null,
     };
-    if (enumValue == null ||
-        !const [
-          'contains',
-          'startsWith',
-          'endsWith',
-          'regex',
-        ].contains(enumValue)) {
-      throw _argumentError(
-        name,
-        index,
-        'contains, startsWith, endsWith, or regex',
-      );
+    final values = definition.arguments[index].enumValues;
+    if (enumValue == null || !values.contains(enumValue)) {
+      throw _argumentError(definition.name, index, values.join(', '));
     }
     return enumValue;
   }
 
   static bool _boolArgument(
-    String name,
+    FinderDslDefinition definition,
     List<FinderAstValue> arguments,
     int index,
   ) {
     final value = arguments[index];
     if (value is! FinderAstBooleanValue) {
-      throw _argumentError(name, index, 'a boolean');
+      throw _argumentError(definition.name, index, 'a boolean');
     }
     return value.value;
   }
 
   static int _integerArgument(
-    String name,
+    FinderDslDefinition definition,
     List<FinderAstValue> arguments,
     int index,
   ) {
     final value = arguments[index];
     if (value is! FinderAstIntegerValue) {
-      throw _argumentError(name, index, 'an integer');
+      throw _argumentError(definition.name, index, 'an integer');
     }
     return value.value;
-  }
-
-  static void _expectCount(
-    String name,
-    List<FinderAstValue> arguments,
-    int count,
-  ) {
-    if (arguments.length != count) {
-      throw _countError(name, count.toString());
-    }
-  }
-
-  static void _expectCallCount(FinderAstCall call, int count) {
-    if (call.arguments.length != count) {
-      throw _countError(call.name, count.toString());
-    }
   }
 
   static FinderDslException _countError(String name, String expected) {

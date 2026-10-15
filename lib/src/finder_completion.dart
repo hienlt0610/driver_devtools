@@ -1,3 +1,5 @@
+import 'finder_dsl_metadata.dart';
+
 enum FinderCompletionKind { root, chain, enumValue, booleanValue }
 
 class FinderCompletionItem {
@@ -37,129 +39,22 @@ class FinderCompletionItem {
 class FinderCompletionRegistry {
   FinderCompletionRegistry._();
 
-  static final List<FinderCompletionItem> roots = List.unmodifiable([
-    _call(
-      'type',
-      'type(value: String)',
-      'Match widgets by runtime type.',
-      '""',
-      1,
-    ),
-    _call('key', 'key(value: String | int)', 'Match a ValueKey.', '""', 1),
-    _call(
-      'text',
-      'text(value: String)',
-      'Match widgets by exact text.',
-      '""',
-      1,
-    ),
-    _call(
-      'textMatch',
-      'textMatch(text, matchType, ignoreCase?)',
-      'Match widget text with a supported match strategy.',
-      '"", contains',
-      1,
-    ),
-    _call(
-      'semanticsLabel',
-      'semanticsLabel(label, isRegExp?)',
-      'Match a semantics label.',
-      '""',
-      1,
-    ),
-    _call(
-      'semanticsId',
-      'semanticsId(identifier: String)',
-      'Match a semantics identifier.',
-      '""',
-      1,
-    ),
-    _call(
-      'tooltip',
-      'tooltip(text: String)',
-      'Match a tooltip message.',
-      '""',
-      1,
-    ),
-    _call(
-      'tooltipText',
-      'tooltipText(text: String)',
-      'Match tooltip text.',
-      '""',
-      1,
-    ),
-    const FinderCompletionItem(
-      label: 'pageBack',
-      signature: 'pageBack()',
-      description: 'Match the page-back finder.',
-      kind: FinderCompletionKind.root,
-      insertion: 'pageBack()',
-      caretOffset: 10,
-    ),
-  ]);
+  static final List<FinderCompletionItem> roots = _definitionItems(
+    FinderDslMemberKind.root,
+  );
 
-  static final List<FinderCompletionItem> chains = List.unmodifiable([
-    _call(
-      'descendant',
-      'descendant(matching, matchRoot?, firstMatchOnly?)',
-      'Find a descendant matching a nested finder.',
-      '',
-      0,
-      kind: FinderCompletionKind.chain,
-    ),
-    _call(
-      'ancestor',
-      'ancestor(matching, matchRoot?, firstMatchOnly?)',
-      'Find an ancestor matching a nested finder.',
-      '',
-      0,
-      kind: FinderCompletionKind.chain,
-    ),
-    _call(
-      'containing',
-      'containing(matching)',
-      'Find the first ancestor containing a nested finder.',
-      '',
-      0,
-      kind: FinderCompletionKind.chain,
-    ),
-    const FinderCompletionItem(
-      label: 'first',
-      signature: 'first()',
-      description: 'Select the first match.',
-      kind: FinderCompletionKind.chain,
-      insertion: 'first()',
-      caretOffset: 7,
-    ),
-    const FinderCompletionItem(
-      label: 'last',
-      signature: 'last()',
-      description: 'Select the last match.',
-      kind: FinderCompletionKind.chain,
-      insertion: 'last()',
-      caretOffset: 6,
-    ),
-    const FinderCompletionItem(
-      label: 'at',
-      signature: 'at(index: int)',
-      description: 'Select the match at a non-negative index.',
-      kind: FinderCompletionKind.chain,
-      insertion: 'at(0)',
-      caretOffset: 3,
-    ),
-  ]);
+  static final List<FinderCompletionItem> chains = _definitionItems(
+    FinderDslMemberKind.chain,
+  );
 
-  static final List<FinderCompletionItem> textMatchValues = List.unmodifiable([
-    for (final value in ['contains', 'startsWith', 'endsWith', 'regex'])
-      FinderCompletionItem(
-        label: value,
-        signature: value,
-        description: 'Use the $value text matching strategy.',
-        kind: FinderCompletionKind.enumValue,
-        insertion: value,
-        caretOffset: value.length,
-      ),
-  ]);
+  static final List<FinderCompletionItem> textMatchValues = _enumItems(
+    FinderDslMetadataRegistry.all
+        .firstWhere(
+          (definition) => definition.mapping == FinderDslMappingKind.textMatch,
+        )
+        .argumentAt(1)!,
+    description: (value) => 'Use the $value text matching strategy.',
+  );
 
   static final List<FinderCompletionItem> booleans = List.unmodifiable([
     for (final value in ['true', 'false'])
@@ -175,30 +70,67 @@ class FinderCompletionRegistry {
 
   static final RegExp dslTokenPattern = _buildDslTokenPattern();
 
-  static FinderCompletionItem _call(
-    String label,
-    String signature,
-    String description,
-    String arguments,
-    int argumentCaretOffset, {
-    FinderCompletionKind kind = FinderCompletionKind.root,
-  }) {
-    final insertion = '$label($arguments)';
-    return FinderCompletionItem(
-      label: label,
-      signature: signature,
-      description: description,
-      kind: kind,
-      insertion: insertion,
-      caretOffset: label.length + 1 + argumentCaretOffset,
+  static String? signatureFor(String name) {
+    return FinderDslMetadataRegistry.find(name)?.signature;
+  }
+
+  static List<FinderCompletionItem> itemsForArgument(
+    FinderDslDefinition? definition,
+    int argumentIndex,
+  ) {
+    final argument = definition?.argumentAt(argumentIndex);
+    if (argument == null) return const [];
+
+    return switch (argument.kind) {
+      FinderDslArgumentKind.finder => roots,
+      FinderDslArgumentKind.enumValue =>
+        definition?.mapping == FinderDslMappingKind.textMatch
+            ? textMatchValues
+            : _enumItems(argument),
+      FinderDslArgumentKind.boolean => booleans,
+      _ => const [],
+    };
+  }
+
+  static List<FinderCompletionItem> _definitionItems(
+    FinderDslMemberKind memberKind,
+  ) {
+    return List.unmodifiable(
+      FinderDslMetadataRegistry.all
+          .where((definition) => definition.memberKind == memberKind)
+          .map(
+            (definition) => FinderCompletionItem(
+              label: definition.name,
+              signature: definition.signature,
+              description: definition.description,
+              kind:
+                  memberKind == FinderDslMemberKind.root
+                      ? FinderCompletionKind.root
+                      : FinderCompletionKind.chain,
+              insertion: definition.completionInsertion(),
+              caretOffset: definition.completionCaretOffset(),
+            ),
+          ),
     );
   }
 
-  static String? signatureFor(String name) {
-    for (final item in [...roots, ...chains]) {
-      if (item.label == name) return item.signature;
-    }
-    return null;
+  static List<FinderCompletionItem> _enumItems(
+    FinderDslArgumentMetadata argument, {
+    String Function(String value)? description,
+  }) {
+    return List.unmodifiable([
+      for (final value in argument.enumValues)
+        FinderCompletionItem(
+          label: value,
+          signature: value,
+          description:
+              description?.call(value) ??
+              'Use the $value ${argument.name} value.',
+          kind: FinderCompletionKind.enumValue,
+          insertion: value,
+          caretOffset: value.length,
+        ),
+    ]);
   }
 
   static RegExp _buildDslTokenPattern() {
@@ -207,7 +139,11 @@ class FinderCompletionRegistry {
             for (final item in [
               ...roots,
               ...chains,
-              ...textMatchValues,
+              ...FinderDslMetadataRegistry.all.expand(
+                (definition) => definition.arguments.expand(
+                  (argument) => _enumItems(argument),
+                ),
+              ),
               ...booleans,
             ])
               item.label,
@@ -296,19 +232,12 @@ class FinderCompletionContextAnalyzer {
         (explicit && last?.kind == _CompletionTokenKind.rightParen)) {
       candidates = FinderCompletionRegistry.chains;
     } else if (frame != null) {
-      signature = FinderCompletionRegistry.signatureFor(frame.name);
-      candidates = switch ((frame.name, frame.argumentIndex)) {
-        ('descendant', 0) ||
-        ('ancestor', 0) ||
-        ('containing', 0) => FinderCompletionRegistry.roots,
-        ('textMatch', 1) => FinderCompletionRegistry.textMatchValues,
-        ('textMatch', 2) ||
-        ('descendant', 1) ||
-        ('ancestor', 1) ||
-        ('descendant', 2) ||
-        ('ancestor', 2) => FinderCompletionRegistry.booleans,
-        _ => const [],
-      };
+      final definition = FinderDslMetadataRegistry.find(frame.name);
+      signature = definition?.signature;
+      candidates = FinderCompletionRegistry.itemsForArgument(
+        definition,
+        frame.argumentIndex,
+      );
     } else if (last == null || last.kind == _CompletionTokenKind.identifier) {
       candidates = FinderCompletionRegistry.roots;
     } else {
