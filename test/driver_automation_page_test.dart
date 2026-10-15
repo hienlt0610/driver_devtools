@@ -72,6 +72,62 @@ void main() {
     expect(tester.widget<DevToolsButton>(verifyButton).onPressed, isNotNull);
   });
 
+  testWidgets('generates and copies Java finder without a driver connection', (
+    tester,
+  ) async {
+    final transport = _ConnectionStateTransport(connected: false);
+    String? copiedText;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copiedText =
+                (call.arguments as Map<Object?, Object?>)['text'] as String;
+          }
+          return null;
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: DriverAutomationPage(transport: transport)),
+      ),
+    );
+    await tester.pump();
+
+    final generateButton = find.byKey(
+      const ValueKey('driver_automation.finder_generate_java_button'),
+    );
+    expect(tester.widget<DevToolsButton>(generateButton).onPressed, isNotNull);
+    expect(
+      tester
+          .widget<DevToolsButton>(
+            find.byKey(
+              const ValueKey('driver_automation.finder_verify_button'),
+            ),
+          )
+          .onPressed,
+      isNull,
+    );
+
+    await tester.enterText(
+      find.byKey(const ValueKey('driver_automation.finder_input')),
+      '{"finderType":"ByText","text":"Login"}',
+    );
+    await tester.tap(generateButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Java Finder'), findsOneWidget);
+    expect(find.text('Flutter.byText("Login")'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.java_finder_copy_button')),
+    );
+    await tester.pump();
+    expect(copiedText, 'Flutter.byText("Login")');
+  });
+
   testWidgets('resets processing after success and error', (tester) async {
     final transport = _PendingDriverTransport();
 

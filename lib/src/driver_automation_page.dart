@@ -4,9 +4,11 @@ import 'package:devtools_app_shared/ui.dart';
 import 'package:devtools_app_shared/utils.dart';
 import 'package:devtools_extensions/devtools_extensions.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'driver_automation_core.dart';
 import 'driver_automation_service.dart';
+import 'java_finder_generator.dart';
 import 'protocol/schema/protocol_schema.dart';
 import 'protocol/schema/protocol_schema_registry.dart';
 import 'protocol/schema/schema_browser.dart';
@@ -195,6 +197,32 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
       return;
     }
     await _execute(request, onResult: (result) => _finderResult = result);
+  }
+
+  void _generateJavaFinder(BuildContext context) {
+    final request = _parse(
+      _finderEditor.text,
+      JsonPayloads.finderVerification,
+      onError: (error) => _finderError = error,
+      clearError: () => _finderError = null,
+      validateSchema: _schemaRegistry.validateFinderPayload,
+      onSchemaMessage: (message) => _finderSchemaMessage = message,
+    );
+    if (request == null) {
+      setState(() {});
+      return;
+    }
+
+    try {
+      final code = JavaFinderGenerator.generate(request.payload!);
+      setState(() => _finderError = null);
+      showDialog<void>(
+        context: context,
+        builder: (_) => _JavaFinderDialog(code: code),
+      );
+    } on JavaFinderGenerationException catch (error) {
+      setState(() => _finderError = error.toString());
+    }
   }
 
   Future<void> _executeCommand() async {
@@ -539,6 +567,14 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
               () =>
                   _formatEditor(_finderEditor, (error) => _finderError = error),
           label: 'Format',
+        ),
+        DevToolsButton(
+          key: const ValueKey<String>(
+            'driver_automation.finder_generate_java_button',
+          ),
+          onPressed: () => _generateJavaFinder(context),
+          icon: Icons.code,
+          label: 'Generate Java',
         ),
         DevToolsButton(
           key: const ValueKey<String>('driver_automation.finder_reset_button'),
@@ -943,6 +979,44 @@ class _ConsoleCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _JavaFinderDialog extends StatelessWidget {
+  const _JavaFinderDialog({required this.code});
+
+  final String code;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Java Finder'),
+      content: SizedBox(
+        width: 720,
+        child: _ResponseCodeBlock(code, maxHeight: 320),
+      ),
+      actions: [
+        DevToolsButton(
+          key: const ValueKey<String>(
+            'driver_automation.java_finder_copy_button',
+          ),
+          icon: Icons.copy,
+          label: 'Copy',
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: code));
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Java Finder copied.')),
+              );
+            }
+          },
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
     );
   }
 }

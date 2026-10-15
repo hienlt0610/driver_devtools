@@ -7,6 +7,7 @@ import 'src/driver_automation_page.dart';
 export 'src/driver_automation_core.dart';
 export 'src/driver_automation_page.dart';
 export 'src/driver_automation_service.dart';
+export 'src/java_finder_generator.dart';
 export 'src/protocol/schema/command_schema.dart';
 export 'src/protocol/schema/builtin_command_schemas.dart';
 export 'src/protocol/schema/builtin_finder_schemas.dart';
