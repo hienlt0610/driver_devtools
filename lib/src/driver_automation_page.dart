@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:devtools_app_shared/ui.dart';
@@ -10,6 +11,8 @@ import 'package:flutter/services.dart';
 
 import 'driver_automation_core.dart';
 import 'driver_automation_service.dart';
+import 'element_explorer_model.dart';
+import 'element_explorer_widgets.dart';
 import 'finder_dsl.dart';
 import 'finder_completion.dart';
 import 'finder_editor.dart';
@@ -25,8 +28,15 @@ class DriverAutomationSession {
       finderMode = FinderEditorMode.dsl,
       commandText = JsonPayloads.defaultCommand,
       requestDataText = JsonPayloads.defaultRequestData,
+      elementExplorerFinderText = JsonPayloads.defaultFinder,
       finderResetTemplate = JsonPayloads.defaultFinder,
-      commandResetTemplate = JsonPayloads.defaultCommand;
+      commandResetTemplate = JsonPayloads.defaultCommand,
+      elementExplorerFinderResetTemplate = JsonPayloads.defaultFinder,
+      elementExplorerAncestorDepthText = '3',
+      elementExplorerDescendantDepthText = '1',
+      elementExplorerSiblingDepthText = '0',
+      elementExplorerMaxNodesText = '200',
+      elementExplorerIncludeSiblings = true;
 
   String finderText;
   String finderDslText;
@@ -34,15 +44,33 @@ class DriverAutomationSession {
   Map<String, dynamic>? finderCanonical;
   String commandText;
   String requestDataText;
+  String elementExplorerFinderText;
   String finderResetTemplate;
   String commandResetTemplate;
+  String elementExplorerFinderResetTemplate;
+  String elementExplorerAncestorDepthText;
+  String elementExplorerDescendantDepthText;
+  String elementExplorerSiblingDepthText;
+  String elementExplorerMaxNodesText;
+  bool elementExplorerIncludeSiblings;
+  String? elementExplorerAppliedFinder;
+  Map<String, String>? elementExplorerAppliedOptions;
+  bool elementExplorerEditorExpanded = true;
+  bool elementExplorerOptionsExpanded = false;
   DriverExecutionResult? finderResult;
   DriverExecutionResult? commandResult;
   DriverExecutionResult? requestDataResult;
+  DriverExecutionResult? elementExplorerResult;
+  ElementExplorerSnapshot? elementExplorerSnapshot;
+  int? elementExplorerReturnedNodes;
+  int? elementExplorerVisitedNodes;
+  bool elementExplorerTruncated = false;
   final history = <HistoryEntry>[];
   String? finderError;
   String? commandError;
   String? requestDataError;
+  String? elementExplorerError;
+  String? elementExplorerSchemaMessage;
   String? finderSchemaMessage;
   String? commandSchemaMessage;
   int selectedTabIndex = 0;
@@ -81,6 +109,11 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
   late final FinderTextEditingController _finderEditor;
   late final JsonTextEditingController _commandEditor;
   late final JsonTextEditingController _requestDataEditor;
+  late final JsonTextEditingController _elementExplorerFinderEditor;
+  late final TextEditingController _elementExplorerAncestorDepthEditor;
+  late final TextEditingController _elementExplorerDescendantDepthEditor;
+  late final TextEditingController _elementExplorerSiblingDepthEditor;
+  late final TextEditingController _elementExplorerMaxNodesEditor;
   bool _updatingFinderEditors = false;
 
   final _busyOperations = <DriverOperationKind>{};
@@ -116,6 +149,17 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
   String? get _requestDataError => _session.requestDataError;
   set _requestDataError(String? value) {
     _session.requestDataError = value;
+  }
+
+  String? get _elementExplorerError => _session.elementExplorerError;
+  set _elementExplorerError(String? value) {
+    _session.elementExplorerError = value;
+  }
+
+  String? get _elementExplorerSchemaMessage =>
+      _session.elementExplorerSchemaMessage;
+  set _elementExplorerSchemaMessage(String? value) {
+    _session.elementExplorerSchemaMessage = value;
   }
 
   String? get _finderSchemaMessage => _session.finderSchemaMessage;
@@ -182,6 +226,21 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     _requestDataEditor = JsonTextEditingController(
       text: _session.requestDataText,
     )..addListener(() => _session.requestDataText = _requestDataEditor.text);
+    _elementExplorerFinderEditor = JsonTextEditingController(
+      text: _session.elementExplorerFinderText,
+    )..addListener(_onElementExplorerDraftChanged);
+    _elementExplorerAncestorDepthEditor = TextEditingController(
+      text: _session.elementExplorerAncestorDepthText,
+    )..addListener(_onElementExplorerDraftChanged);
+    _elementExplorerDescendantDepthEditor = TextEditingController(
+      text: _session.elementExplorerDescendantDepthText,
+    )..addListener(_onElementExplorerDraftChanged);
+    _elementExplorerSiblingDepthEditor = TextEditingController(
+      text: _session.elementExplorerSiblingDepthText,
+    )..addListener(_onElementExplorerDraftChanged);
+    _elementExplorerMaxNodesEditor = TextEditingController(
+      text: _session.elementExplorerMaxNodesText,
+    )..addListener(_onElementExplorerDraftChanged);
 
     if (_service case final service?) {
       addAutoDisposeListener(
@@ -206,10 +265,27 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     _finderEditor.dispose();
     _commandEditor.dispose();
     _requestDataEditor.dispose();
+    _elementExplorerFinderEditor.dispose();
+    _elementExplorerAncestorDepthEditor.dispose();
+    _elementExplorerDescendantDepthEditor.dispose();
+    _elementExplorerSiblingDepthEditor.dispose();
+    _elementExplorerMaxNodesEditor.dispose();
     super.dispose();
   }
 
   void _onControllerChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onElementExplorerDraftChanged() {
+    _session.elementExplorerFinderText = _elementExplorerFinderEditor.text;
+    _session.elementExplorerAncestorDepthText =
+        _elementExplorerAncestorDepthEditor.text;
+    _session.elementExplorerDescendantDepthText =
+        _elementExplorerDescendantDepthEditor.text;
+    _session.elementExplorerSiblingDepthText =
+        _elementExplorerSiblingDepthEditor.text;
+    _session.elementExplorerMaxNodesText = _elementExplorerMaxNodesEditor.text;
     if (mounted) setState(() {});
   }
 
@@ -412,6 +488,183 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     await _execute(request, onResult: (result) => _requestDataResult = result);
   }
 
+  Map<String, String>? _elementExplorerOptions() {
+    final options = _elementExplorerOptionsDraft();
+    final integerFields = <String, int>{};
+    for (final name in <String>[
+      'ancestorDepth',
+      'descendantDepth',
+      'siblingDepth',
+      'maxNodes',
+    ]) {
+      final value = int.tryParse(options[name]!);
+      if (value == null) {
+        _elementExplorerError = '$name must be an integer.';
+        return null;
+      }
+      integerFields[name] = value;
+    }
+    for (final name in <String>[
+      'ancestorDepth',
+      'descendantDepth',
+      'siblingDepth',
+    ]) {
+      final value = integerFields[name]!;
+      if (value < 0 || value > 32) {
+        _elementExplorerError = '$name must be between 0 and 32.';
+        return null;
+      }
+    }
+    final maxNodes = integerFields['maxNodes']!;
+    if (maxNodes < 1 || maxNodes > 2000) {
+      _elementExplorerError = 'maxNodes must be between 1 and 2000.';
+      return null;
+    }
+    return options;
+  }
+
+  Map<String, String> _elementExplorerOptionsDraft() {
+    return <String, String>{
+      'ancestorDepth': _elementExplorerAncestorDepthEditor.text,
+      'descendantDepth': _elementExplorerDescendantDepthEditor.text,
+      'includeSiblings': _session.elementExplorerIncludeSiblings.toString(),
+      'siblingDepth': _elementExplorerSiblingDepthEditor.text,
+      'maxNodes': _elementExplorerMaxNodesEditor.text,
+    };
+  }
+
+  String? _elementExplorerFinderDraftKey() {
+    try {
+      return const JsonEncoder.withIndent(
+        '  ',
+      ).convert(JsonPayloads.parseObject(_elementExplorerFinderEditor.text));
+    } on JsonPayloadException {
+      return null;
+    }
+  }
+
+  bool _elementExplorerOptionsMatch(
+    Map<String, String> left,
+    Map<String, String> right,
+  ) {
+    if (left.length != right.length) return false;
+    for (final entry in left.entries) {
+      if (right[entry.key] != entry.value) return false;
+    }
+    return true;
+  }
+
+  bool get _elementExplorerHasPendingChanges {
+    if (_session.elementExplorerSnapshot == null) return false;
+    final appliedFinder = _session.elementExplorerAppliedFinder;
+    final appliedOptions = _session.elementExplorerAppliedOptions;
+    if (appliedFinder == null || appliedOptions == null) return true;
+    return _elementExplorerFinderDraftKey() != appliedFinder ||
+        !_elementExplorerOptionsMatch(
+          _elementExplorerOptionsDraft(),
+          appliedOptions,
+        );
+  }
+
+  Future<void> _inspectElementExplorer() async {
+    if (_busyOperations.contains(DriverOperationKind.elementExplorer)) return;
+    Map<String, dynamic> finder;
+    try {
+      finder = JsonPayloads.parseObject(_elementExplorerFinderEditor.text);
+    } on JsonPayloadException catch (error) {
+      setState(() {
+        _elementExplorerError =
+            'Invalid or incomplete JSON\n'
+            '${error.message}\nLine ${error.line}, Column ${error.column}';
+        _elementExplorerSchemaMessage = null;
+      });
+      return;
+    }
+
+    final schemaResult = _schemaRegistry.validateFinderPayload(finder);
+    final options = _elementExplorerOptions();
+    if (!schemaResult.isValid || options == null) {
+      setState(() {
+        _elementExplorerSchemaMessage =
+            schemaResult.messages.isEmpty
+                ? null
+                : schemaResult.messages.join('\n');
+        if (!schemaResult.isValid) {
+          _elementExplorerError = schemaResult.errors.join('\n');
+        }
+      });
+      return;
+    }
+
+    final request = JsonPayloads.elementExplorerFromCanonical(
+      finder,
+      options: options,
+      rawInput: _elementExplorerFinderEditor.text,
+    );
+    setState(() {
+      _elementExplorerError = null;
+      _elementExplorerSchemaMessage =
+          schemaResult.messages.isEmpty
+              ? null
+              : schemaResult.messages.join('\n');
+      _session.elementExplorerResult = null;
+    });
+    await _execute(
+      request,
+      onResult: (result) {
+        _session.elementExplorerResult = result;
+        if (!result.success) {
+          _elementExplorerError =
+              result.error ?? 'Element Explorer request failed.';
+          return;
+        }
+        try {
+          final parsed = ElementExplorerResponse.parse(result.response);
+          if (parsed.error != null) {
+            _elementExplorerError =
+                '${parsed.error!.code}: ${parsed.error!.message}';
+          } else {
+            _elementExplorerError = null;
+            _session.elementExplorerSnapshot = parsed.snapshot;
+            _session.elementExplorerReturnedNodes = parsed.returnedNodes;
+            _session.elementExplorerVisitedNodes = parsed.visitedNodes;
+            _session.elementExplorerTruncated = parsed.truncated;
+            _session.elementExplorerAppliedFinder =
+                const JsonEncoder.withIndent('  ').convert(finder);
+            _session.elementExplorerAppliedOptions = Map<String, String>.from(
+              options,
+            );
+            _session.elementExplorerEditorExpanded = false;
+          }
+        } on ElementExplorerResponseException catch (error) {
+          _elementExplorerError = 'INSPECTION_FAILED: $error';
+        }
+      },
+    );
+  }
+
+  void _loadFinderIntoElementExplorer() {
+    final canonical = _resolveFinderDraft();
+    if (canonical == null) return;
+    final formatted = const JsonEncoder.withIndent('  ').convert(canonical);
+    _elementExplorerFinderEditor.value = TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+      composing: TextRange.empty,
+    );
+    setState(() {
+      _elementExplorerError = null;
+      _elementExplorerSchemaMessage = null;
+    });
+  }
+
+  void _formatElementExplorerFinder() {
+    _formatEditor(
+      _elementExplorerFinderEditor,
+      (error) => _elementExplorerError = error,
+    );
+  }
+
   DriverRequest? _parse(
     String source,
     DriverRequest Function(String) parser, {
@@ -507,6 +760,7 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     DriverRequest request, {
     required void Function(DriverExecutionResult result) onResult,
   }) async {
+    if (_busyOperations.contains(request.kind)) return;
     final operation = _DriverOperation();
     _activeOperations[request.kind] = operation;
     setState(() => _busyOperations.add(request.kind));
@@ -739,7 +993,7 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
               width: double.infinity,
               child: Material(
                 child: DefaultTabController(
-                  length: 3,
+                  length: 4,
                   animationDuration: Duration.zero,
                   initialIndex: _session.selectedTabIndex,
                   child: Column(
@@ -784,6 +1038,12 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
                             ),
                             text: 'REQUEST DATA',
                           ),
+                          Tab(
+                            key: ValueKey<String>(
+                              'driver_automation.element_explorer_tab',
+                            ),
+                            text: 'ELEMENT EXPLORER',
+                          ),
                         ],
                       ),
                       if (_controller.status ==
@@ -809,6 +1069,9 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
                             _buildTabContent(_buildFinderConsole(context)),
                             _buildTabContent(_buildCommandConsole(context)),
                             _buildTabContent(_buildRequestDataConsole(context)),
+                            _buildTabContent(
+                              _buildElementExplorerConsole(context),
+                            ),
                           ],
                         ),
                       ),
@@ -1054,6 +1317,287 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
       result: _requestDataResult,
     );
   }
+
+  String _elementExplorerFinderSummary() {
+    final text = _elementExplorerFinderEditor.text.trim().replaceAll(
+      RegExp(r'\s+'),
+      ' ',
+    );
+    return text.isEmpty ? 'Enter a Finder JSON payload' : text;
+  }
+
+  String _elementExplorerOptionsSummary([Map<String, String>? options]) {
+    final values = options ?? _elementExplorerOptionsDraft();
+    final siblings = values['includeSiblings'] == 'true' ? 'on' : 'off';
+    return 'Ancestors ${values['ancestorDepth']} · '
+        'Descendants ${values['descendantDepth']} · '
+        'Siblings $siblings · '
+        'Max ${values['maxNodes']}';
+  }
+
+  Widget _buildElementExplorerInspectButton({
+    required bool isProcessing,
+    required bool canExecute,
+  }) {
+    final hasSnapshot = _session.elementExplorerSnapshot != null;
+    final label =
+        isProcessing
+            ? 'Stop'
+            : hasSnapshot && _elementExplorerHasPendingChanges
+            ? 'Apply & Reinspect'
+            : hasSnapshot
+            ? 'Reinspect'
+            : 'Inspect';
+    return DevToolsButton(
+      key: const ValueKey<String>(
+        'driver_automation.element_explorer_inspect_button',
+      ),
+      onPressed:
+          isProcessing
+              ? () => _stopOperation(DriverOperationKind.elementExplorer)
+              : canExecute
+              ? _inspectElementExplorer
+              : null,
+      icon: isProcessing ? Icons.stop : Icons.search,
+      label: label,
+      elevated: true,
+      outlined: false,
+    );
+  }
+
+  Widget _buildElementExplorerConsole(BuildContext context) {
+    final isProcessing = _busyOperations.contains(
+      DriverOperationKind.elementExplorer,
+    );
+    final canExecute = _controller.status == DriverConnectionStatus.connected;
+    final snapshot = _session.elementExplorerSnapshot;
+    final editorExpanded =
+        _session.elementExplorerEditorExpanded || snapshot == null;
+    final optionsExpanded = _session.elementExplorerOptionsExpanded;
+    return RoundedOutlinedBorder(
+      clip: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AreaPaneHeader(
+            title: Text(
+              'ELEMENT EXPLORER',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.2,
+              ),
+            ),
+            roundedTopBorder: false,
+            includeTopBorder: false,
+            includeBottomBorder: true,
+          ),
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (isProcessing) ...[
+                  const LinearProgressIndicator(),
+                  const SizedBox(height: 8),
+                ],
+                if (editorExpanded) ...[
+                  Text(
+                    'Finder input',
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                  const SizedBox(height: 6),
+                  _JsonEditor(
+                    automationKey: const ValueKey<String>(
+                      'driver_automation.element_explorer_finder_input',
+                    ),
+                    controller: _elementExplorerFinderEditor,
+                    errorText: _elementExplorerError,
+                    statusText: _elementExplorerSchemaMessage,
+                  ),
+                  const SizedBox(height: 8),
+                  _ActionToolbar(
+                    actions: [
+                      DevToolsButton(
+                        key: const ValueKey<String>(
+                          'driver_automation.element_explorer_load_finder_button',
+                        ),
+                        onPressed: _loadFinderIntoElementExplorer,
+                        icon: Icons.input,
+                        label: 'Load from Finder',
+                      ),
+                      DevToolsButton(
+                        key: const ValueKey<String>(
+                          'driver_automation.element_explorer_format_button',
+                        ),
+                        onPressed: _formatElementExplorerFinder,
+                        label: 'Format',
+                      ),
+                      DevToolsButton(
+                        key: const ValueKey<String>(
+                          'driver_automation.element_explorer_reset_button',
+                        ),
+                        onPressed:
+                            () => _confirmReset(
+                              context,
+                              editor: _elementExplorerFinderEditor,
+                              template:
+                                  _session.elementExplorerFinderResetTemplate,
+                              setError:
+                                  (error) => _elementExplorerError = error,
+                            ),
+                        icon: Icons.restart_alt,
+                        label: 'Reset',
+                      ),
+                      _buildElementExplorerInspectButton(
+                        isProcessing: isProcessing,
+                        canExecute: canExecute,
+                      ),
+                    ],
+                  ),
+                ] else ...[
+                  Row(
+                    children: [
+                      const Icon(Icons.filter_alt_outlined, size: 16),
+                      const SizedBox(width: denseSpacing),
+                      Expanded(
+                        child: Text(
+                          _elementExplorerFinderSummary(),
+                          key: const ValueKey<String>(
+                            'driver_automation.element_explorer_finder_summary',
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      _buildElementExplorerInspectButton(
+                        isProcessing: isProcessing,
+                        canExecute: canExecute,
+                      ),
+                      DevToolsButton(
+                        key: const ValueKey<String>(
+                          'driver_automation.element_explorer_edit_finder_button',
+                        ),
+                        icon: Icons.edit_outlined,
+                        label: 'Edit',
+                        tooltip: 'Edit Finder',
+                        onPressed:
+                            () => setState(
+                              () =>
+                                  _session.elementExplorerEditorExpanded = true,
+                            ),
+                        outlined: false,
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              _elementExplorerOptionsSummary(
+                                snapshot == null
+                                    ? null
+                                    : _session.elementExplorerAppliedOptions,
+                              ),
+                              style: Theme.of(context).subtleTextStyle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (_elementExplorerHasPendingChanges) ...[
+                            const SizedBox(width: denseSpacing),
+                            Text(
+                              'Pending changes',
+                              key: const ValueKey<String>(
+                                'driver_automation.element_explorer_pending_changes',
+                              ),
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.primary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    DevToolsButton(
+                      key: const ValueKey<String>(
+                        'driver_automation.element_explorer_options_button',
+                      ),
+                      icon:
+                          optionsExpanded
+                              ? Icons.expand_less
+                              : Icons.tune_outlined,
+                      label: optionsExpanded ? 'Hide options' : 'Options',
+                      tooltip: 'Inspection options',
+                      onPressed:
+                          () => setState(
+                            () =>
+                                _session.elementExplorerOptionsExpanded =
+                                    !optionsExpanded,
+                          ),
+                      outlined: false,
+                    ),
+                  ],
+                ),
+                if (!editorExpanded && _elementExplorerError != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      _elementExplorerError!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                if (optionsExpanded) ...[
+                  const SizedBox(height: 6),
+                  ElementExplorerOptionsEditor(
+                    ancestorDepthController:
+                        _elementExplorerAncestorDepthEditor,
+                    descendantDepthController:
+                        _elementExplorerDescendantDepthEditor,
+                    siblingDepthController: _elementExplorerSiblingDepthEditor,
+                    maxNodesController: _elementExplorerMaxNodesEditor,
+                    includeSiblings: _session.elementExplorerIncludeSiblings,
+                    onIncludeSiblingsChanged: (value) {
+                      setState(
+                        () => _session.elementExplorerIncludeSiblings = value,
+                      );
+                    },
+                  ),
+                ],
+                if (snapshot != null) ...[
+                  const SizedBox(height: 12),
+                  ElementExplorerViewer(
+                    snapshot: snapshot,
+                    truncated: _session.elementExplorerTruncated,
+                    returnedNodes: _session.elementExplorerReturnedNodes ?? 0,
+                    visitedNodes: _session.elementExplorerVisitedNodes ?? 0,
+                  ),
+                ] else if (!isProcessing && _elementExplorerError == null)
+                  Container(
+                    key: const ValueKey<String>(
+                      'driver_automation.element_explorer_empty',
+                    ),
+                    padding: const EdgeInsets.all(defaultSpacing),
+                    child: Text(
+                      'Enter a Finder and press Inspect to capture an Element '
+                      'Tree snapshot.',
+                      style: Theme.of(context).subtleTextStyle,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class HistoryEntry {
@@ -1072,6 +1616,8 @@ class HistoryEntry {
             : 'Command · $command';
       case DriverOperationKind.requestData:
         return 'RequestData';
+      case DriverOperationKind.elementExplorer:
+        return 'Element Explorer';
     }
   }
 

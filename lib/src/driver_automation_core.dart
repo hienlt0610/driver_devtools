@@ -28,7 +28,7 @@ void defaultDriverErrorLogger(
   );
 }
 
-enum DriverOperationKind { finderVerify, command, requestData }
+enum DriverOperationKind { finderVerify, command, requestData, elementExplorer }
 
 class DriverRequest {
   const DriverRequest({
@@ -144,6 +144,23 @@ class JsonPayloads {
       rawInput: source,
       args: <String, String>{'command': 'request_data', 'message': source},
       payload: payload,
+    );
+  }
+
+  static DriverRequest elementExplorerFromCanonical(
+    Map<String, dynamic> finder, {
+    Map<String, String> options = const <String, String>{},
+    String? rawInput,
+  }) {
+    return DriverRequest(
+      kind: DriverOperationKind.elementExplorer,
+      rawInput: rawInput ?? const JsonEncoder.withIndent('  ').convert(finder),
+      args: <String, String>{
+        ..._toDriverArgs(finder),
+        ...options,
+        'command': 'element_explorer',
+      },
+      payload: finder,
     );
   }
 

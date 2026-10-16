@@ -332,6 +332,305 @@ void main() {
     );
   });
 
+  testWidgets('renders and executes the Element Explorer tab', (tester) async {
+    final transport = _ReinspectElementExplorerTransport(
+      initialText: '10.500.000 VNĐ',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: DriverAutomationPage(transport: transport)),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('driver_automation.element_explorer_tab')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.element_explorer_tab')),
+    );
+    await tester.pump();
+
+    final explorerInput = find.byKey(
+      const ValueKey('driver_automation.element_explorer_finder_input'),
+    );
+    expect(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_load_finder_button'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('driver_automation.element_explorer_format_button')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('driver_automation.element_explorer_reset_button')),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_load_finder_button'),
+      ),
+    );
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(explorerInput).controller!.text,
+      contains('finderType'),
+    );
+    await tester.enterText(
+      explorerInput,
+      '{"finderType":"ByText","text":"10.500.000 VNĐ"}',
+    );
+    await tester.tap(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_format_button'),
+      ),
+    );
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(explorerInput).controller!.text,
+      contains('\n'),
+    );
+    await tester.tap(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_reset_button'),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Reset editor?'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.reset_confirm_button')),
+    );
+    await tester.pump();
+    await tester.enterText(
+      explorerInput,
+      '{"finderType":"ByText","text":"10.500.000 VNĐ"}',
+    );
+    final inspectButton = find.byKey(
+      const ValueKey('driver_automation.element_explorer_inspect_button'),
+    );
+    await tester.ensureVisible(inspectButton);
+    await tester.tap(inspectButton);
+    await tester.pump();
+
+    expect(transport.executionCalls.single['command'], 'element_explorer');
+    expect(transport.executionCalls.single['ancestorDepth'], '3');
+    expect(transport.executionCalls.single['descendantDepth'], '1');
+    expect(transport.executionCalls.single['includeSiblings'], 'true');
+    expect(transport.executionCalls.single['siblingDepth'], '0');
+    expect(transport.executionCalls.single['maxNodes'], '200');
+    expect(
+      find.byKey(const ValueKey('element_explorer.node.n1')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('element_explorer.node.n1')),
+        matching: find.text('10.500.000 VNĐ'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.gps_fixed), findsOneWidget);
+    expect(find.text('TARGET'), findsNothing);
+    expect(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_finder_summary'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_finder_input'),
+      ),
+      findsNothing,
+    );
+    expect(find.text('Reinspect'), findsOneWidget);
+    expect(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_pending_changes'),
+      ),
+      findsNothing,
+    );
+
+    await tester.tap(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_options_button'),
+      ),
+    );
+    await tester.pump();
+    final ancestorDepth = find.byKey(
+      const ValueKey('driver_automation.element_explorer_ancestor_depth'),
+    );
+    tester.widget<DevToolsTextField>(ancestorDepth).controller.text = '5';
+    await tester.pump();
+    expect(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_pending_changes'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Apply & Reinspect'), findsOneWidget);
+
+    await tester.ensureVisible(inspectButton);
+    await tester.tap(inspectButton);
+    await tester.pump();
+    expect(transport.executionCalls, hasLength(2));
+    expect(transport.executionCalls[1]['ancestorDepth'], '5');
+    expect(transport.executionCalls[1]['text'], '10.500.000 VNĐ');
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('element_explorer.node.n1')),
+        matching: find.text('Updated tree'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('element_explorer.node.n1')),
+        matching: find.text('10.500.000 VNĐ'),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_pending_changes'),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_finder_input'),
+      ),
+      findsNothing,
+    );
+
+    await tester.tap(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_edit_finder_button'),
+      ),
+    );
+    await tester.pump();
+    expect(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_finder_input'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('renders runtime Element Explorer errors without a tree', (
+    tester,
+  ) async {
+    final transport = _ElementExplorerErrorTransport();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: DriverAutomationPage(transport: transport)),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.element_explorer_tab')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_inspect_button'),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.textContaining('TARGET_NOT_FOUND'), findsOneWidget);
+    expect(find.byKey(const ValueKey('element_explorer.tree')), findsNothing);
+  });
+
+  testWidgets('preserves the previous snapshot when reinspection fails', (
+    tester,
+  ) async {
+    final transport = _ReinspectElementExplorerTransport(failSecond: true);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: DriverAutomationPage(transport: transport)),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.element_explorer_tab')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_inspect_button'),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_options_button'),
+      ),
+    );
+    await tester.pump();
+    final descendantDepth = find.byKey(
+      const ValueKey('driver_automation.element_explorer_descendant_depth'),
+    );
+    (descendantDepth.evaluate().single.widget as DevToolsTextField)
+        .controller
+        .text = '4';
+    await tester.pump();
+    final inspectButton = find.byKey(
+      const ValueKey('driver_automation.element_explorer_inspect_button'),
+    );
+    await tester.ensureVisible(inspectButton);
+    await tester.tap(inspectButton);
+    await tester.pump();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('element_explorer.node.n1')),
+        matching: find.text('Initial tree'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('TARGET_NOT_FOUND'), findsOneWidget);
+    expect(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_pending_changes'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('prevents duplicate Element Explorer requests', (tester) async {
+    final transport = _PendingDriverTransport();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: DriverAutomationPage(transport: transport)),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('driver_automation.element_explorer_tab')),
+    );
+    await tester.pump();
+
+    final inspect = tester.widget<DevToolsButton>(
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_inspect_button'),
+      ),
+    );
+    inspect.onPressed!();
+    inspect.onPressed!();
+    await tester.pump();
+
+    expect(transport.pendingCount, 1);
+    transport.completeNext(
+      const DriverTransportResponse(isError: true, response: null),
+    );
+    await tester.pump();
+  });
+
   testWidgets('disables driver actions and offers a connection retry', (
     tester,
   ) async {
@@ -1038,6 +1337,132 @@ void main() {
       expect(transport.pendingCount, 0);
     },
   );
+}
+
+class _ReinspectElementExplorerTransport implements DriverTransport {
+  _ReinspectElementExplorerTransport({
+    this.failSecond = false,
+    this.initialText = 'Initial tree',
+  });
+
+  final bool failSecond;
+  final String initialText;
+  final executionCalls = <Map<String, String>>[];
+
+  @override
+  Future<DriverTransportResponse> call(Map<String, String> args) async {
+    if (args['command'] == 'get_health') {
+      return const DriverTransportResponse(
+        response: <String, dynamic>{'status': 'ok'},
+        raw: <String, dynamic>{
+          'isError': false,
+          'response': <String, dynamic>{'status': 'ok'},
+        },
+      );
+    }
+    executionCalls.add(Map<String, String>.from(args));
+    if (failSecond && executionCalls.length == 2) {
+      const response = <String, dynamic>{
+        'schemaVersion': 1,
+        'matchCount': 0,
+        'returnedNodes': 0,
+        'visitedNodes': 1,
+        'truncated': false,
+        'error': <String, dynamic>{
+          'code': 'TARGET_NOT_FOUND',
+          'message': 'The Finder did not match an Element',
+        },
+      };
+      return const DriverTransportResponse(
+        response: response,
+        raw: <String, dynamic>{'isError': false, 'response': response},
+      );
+    }
+    final response = _elementExplorerSnapshotResponse(
+      executionCalls.length == 1 ? initialText : 'Updated tree',
+    );
+    return DriverTransportResponse(
+      response: response,
+      raw: <String, dynamic>{'isError': false, 'response': response},
+    );
+  }
+}
+
+Map<String, dynamic> _elementExplorerSnapshotResponse(String text) {
+  return <String, dynamic>{
+    'schemaVersion': 1,
+    'matchCount': 1,
+    'returnedNodes': 2,
+    'visitedNodes': 3,
+    'truncated': false,
+    'root': <String, dynamic>{
+      'nodeId': 'n0',
+      'parentId': null,
+      'widgetType': 'Column',
+      'elementType': 'ColumnElement',
+      'key': null,
+      'text': null,
+      'semanticsIdentifier': null,
+      'isTarget': false,
+      'childrenState': 'complete',
+      'children': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'nodeId': 'n1',
+          'parentId': 'n0',
+          'widgetType': 'Text',
+          'elementType': 'StatelessElement',
+          'key': null,
+          'text': text,
+          'semanticsIdentifier': null,
+          'isTarget': true,
+          'childrenState': 'notRequested',
+          'children': <Map<String, dynamic>>[],
+        },
+      ],
+    },
+  };
+}
+
+class _ElementExplorerErrorTransport implements DriverTransport {
+  @override
+  Future<DriverTransportResponse> call(Map<String, String> args) async {
+    if (args['command'] == 'get_health') {
+      return const DriverTransportResponse(
+        response: <String, dynamic>{'status': 'ok'},
+        raw: <String, dynamic>{
+          'isError': false,
+          'response': <String, dynamic>{'status': 'ok'},
+        },
+      );
+    }
+    return const DriverTransportResponse(
+      response: <String, dynamic>{
+        'schemaVersion': 1,
+        'matchCount': 0,
+        'returnedNodes': 0,
+        'visitedNodes': 1,
+        'truncated': false,
+        'error': <String, dynamic>{
+          'code': 'TARGET_NOT_FOUND',
+          'message': 'The Finder did not match an Element',
+        },
+      },
+      raw: <String, dynamic>{
+        'isError': false,
+        'response': <String, dynamic>{
+          'schemaVersion': 1,
+          'matchCount': 0,
+          'returnedNodes': 0,
+          'visitedNodes': 1,
+          'truncated': false,
+          'error': <String, dynamic>{
+            'code': 'TARGET_NOT_FOUND',
+            'message': 'The Finder did not match an Element',
+          },
+        },
+      },
+    );
+  }
 }
 
 class _PendingDriverTransport implements DriverTransport {

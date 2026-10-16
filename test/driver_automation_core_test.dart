@@ -146,6 +146,37 @@ void main() {
         '{\n  "ok": true\n}',
       );
     });
+
+    test('builds an Element Explorer request from canonical Finder JSON', () {
+      final request = JsonPayloads.elementExplorerFromCanonical(
+        <String, dynamic>{
+          'finderType': 'Descendant',
+          'of': <String, dynamic>{'finderType': 'ByType', 'type': 'Column'},
+          'matching': <String, dynamic>{
+            'finderType': 'ByText',
+            'text': '10.500.000 VNĐ',
+          },
+        },
+        options: <String, String>{
+          'ancestorDepth': '3',
+          'descendantDepth': '1',
+          'includeSiblings': 'true',
+          'siblingDepth': '0',
+          'maxNodes': '200',
+        },
+      );
+
+      expect(request.kind, DriverOperationKind.elementExplorer);
+      expect(request.args['command'], 'element_explorer');
+      expect(request.args['ancestorDepth'], '3');
+      expect(request.args['maxNodes'], '200');
+      expect(request.args['of'], '{"finderType":"ByType","type":"Column"}');
+      expect(
+        request.args['matching'],
+        '{"finderType":"ByText","text":"10.500.000 VNĐ"}',
+      );
+      expect(request.payload?['finderType'], 'Descendant');
+    });
   });
 
   group('DriverAutomationController', () {
