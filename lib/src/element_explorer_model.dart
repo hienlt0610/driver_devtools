@@ -26,6 +26,7 @@ class ElementExplorerResponse {
     required this.returnedNodes,
     required this.visitedNodes,
     required this.truncated,
+    this.collection,
     this.snapshot,
     this.error,
   });
@@ -43,6 +44,7 @@ class ElementExplorerResponse {
     final returnedNodes = _requiredInt(payload, 'returnedNodes');
     final visitedNodes = _requiredInt(payload, 'visitedNodes');
     final truncated = _requiredBool(payload, 'truncated');
+    final collection = _parseCollection(payload['collection']);
     final rawError = payload['error'];
 
     if (rawError != null) {
@@ -63,6 +65,7 @@ class ElementExplorerResponse {
         returnedNodes: returnedNodes,
         visitedNodes: visitedNodes,
         truncated: truncated,
+        collection: collection,
         error: error,
       );
     }
@@ -93,6 +96,7 @@ class ElementExplorerResponse {
       returnedNodes: returnedNodes,
       visitedNodes: visitedNodes,
       truncated: truncated,
+      collection: collection,
       snapshot: ElementExplorerSnapshot(root: root),
     );
   }
@@ -102,6 +106,7 @@ class ElementExplorerResponse {
   final int returnedNodes;
   final int visitedNodes;
   final bool truncated;
+  final ElementExplorerCollection? collection;
   final ElementExplorerSnapshot? snapshot;
   final ElementExplorerError? error;
 
@@ -124,6 +129,38 @@ class ElementExplorerSnapshot {
   const ElementExplorerSnapshot({required this.root});
 
   final ElementExplorerNode root;
+}
+
+class ElementExplorerCollection {
+  const ElementExplorerCollection({
+    required this.mode,
+    required this.ancestorLevelsCollected,
+    required this.rootReached,
+    required this.contextNodesCollected,
+    required this.stopReasons,
+    required this.limits,
+  });
+
+  final String mode;
+  final int ancestorLevelsCollected;
+  final bool? rootReached;
+  final int contextNodesCollected;
+  final List<String> stopReasons;
+  final ElementExplorerCollectionLimits limits;
+}
+
+class ElementExplorerCollectionLimits {
+  const ElementExplorerCollectionLimits({
+    required this.maxAncestorDepth,
+    required this.maxContextNodes,
+    required this.maxVisitedNodes,
+    required this.maxReturnedNodes,
+  });
+
+  final int maxAncestorDepth;
+  final int maxContextNodes;
+  final int maxVisitedNodes;
+  final int maxReturnedNodes;
 }
 
 class ElementExplorerNode {
@@ -275,10 +312,78 @@ Map<String, dynamic>? _optionalMap(Map<String, dynamic> payload, String name) {
   if (value is! Map) {
     throw ElementExplorerResponseException('$name must be an object or null.');
   }
-  return <String, dynamic>{
+  return Map<String, dynamic>.unmodifiable(<String, dynamic>{
     for (final entry in value.entries)
       if (entry.key is String) entry.key as String: entry.value,
-  };
+  });
+}
+
+ElementExplorerCollection? _parseCollection(Object? source) {
+  if (source == null) return null;
+  final payload = _asMap(source, 'collection');
+  final mode = _requiredString(payload, 'mode');
+  if (mode != 'limited' && mode != 'toRoot') {
+    throw ElementExplorerResponseException('Unknown collection mode: $mode.');
+  }
+  final rootReachedValue = payload['rootReached'];
+  final bool? rootReached;
+  if (rootReachedValue == null) {
+    rootReached = null;
+  } else if (rootReachedValue is bool) {
+    rootReached = rootReachedValue;
+  } else {
+    throw const ElementExplorerResponseException(
+      'rootReached must be a boolean or null.',
+    );
+  }
+  final rawStopReasons = payload['stopReasons'];
+  if (rawStopReasons is! List ||
+      rawStopReasons.any((value) => value is! String)) {
+    throw const ElementExplorerResponseException(
+      'stopReasons must be a list of strings.',
+    );
+  }
+  final limits = _asMap(payload['limits'], 'collection.limits');
+  return ElementExplorerCollection(
+    mode: mode,
+    ancestorLevelsCollected: _nonNegativeInt(
+      payload,
+      'ancestorLevelsCollected',
+    ),
+    rootReached: rootReached,
+    contextNodesCollected: _nonNegativeInt(payload, 'contextNodesCollected'),
+    stopReasons: List.unmodifiable(rawStopReasons.cast<String>()),
+    limits: ElementExplorerCollectionLimits(
+      maxAncestorDepth: _positiveInt(limits, 'maxAncestorDepth'),
+      maxContextNodes: _positiveOrZeroInt(limits, 'maxContextNodes'),
+      maxVisitedNodes: _positiveInt(limits, 'maxVisitedNodes'),
+      maxReturnedNodes: _positiveInt(limits, 'maxReturnedNodes'),
+    ),
+  );
+}
+
+int _nonNegativeInt(Map<String, dynamic> payload, String name) {
+  final value = _requiredInt(payload, name);
+  if (value < 0) {
+    throw ElementExplorerResponseException('$name must not be negative.');
+  }
+  return value;
+}
+
+int _positiveInt(Map<String, dynamic> payload, String name) {
+  final value = _requiredInt(payload, name);
+  if (value <= 0) {
+    throw ElementExplorerResponseException('$name must be positive.');
+  }
+  return value;
+}
+
+int _positiveOrZeroInt(Map<String, dynamic> payload, String name) {
+  final value = _requiredInt(payload, name);
+  if (value < 0) {
+    throw ElementExplorerResponseException('$name must not be negative.');
+  }
+  return value;
 }
 
 List<String> _stringList(Object? value) {

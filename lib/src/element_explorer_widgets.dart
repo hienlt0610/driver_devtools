@@ -4,6 +4,7 @@ import 'package:devtools_app_shared/ui.dart';
 import 'package:flutter/material.dart';
 
 import 'element_explorer_model.dart';
+import 'element_explorer_projection.dart';
 
 class ElementExplorerOptionsEditor extends StatelessWidget {
   const ElementExplorerOptionsEditor({
@@ -14,6 +15,10 @@ class ElementExplorerOptionsEditor extends StatelessWidget {
     required this.maxNodesController,
     required this.includeSiblings,
     required this.onIncludeSiblingsChanged,
+    this.traversalMode = 'limited',
+    this.onTraversalModeChanged,
+    this.displayMode = ElementExplorerDisplayMode.pruned,
+    this.onDisplayModeChanged,
   });
 
   final TextEditingController ancestorDepthController;
@@ -22,6 +27,10 @@ class ElementExplorerOptionsEditor extends StatelessWidget {
   final TextEditingController maxNodesController;
   final bool includeSiblings;
   final ValueChanged<bool> onIncludeSiblingsChanged;
+  final String traversalMode;
+  final ValueChanged<String>? onTraversalModeChanged;
+  final ElementExplorerDisplayMode displayMode;
+  final ValueChanged<ElementExplorerDisplayMode>? onDisplayModeChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -85,6 +94,38 @@ class ElementExplorerOptionsEditor extends StatelessWidget {
             const Text('Include siblings'),
           ],
         ),
+        DropdownButton<String>(
+          key: const ValueKey<String>(
+            'driver_automation.element_explorer_traversal_mode',
+          ),
+          value: traversalMode,
+          items: const <DropdownMenuItem<String>>[
+            DropdownMenuItem(value: 'limited', child: Text('Limited')),
+            DropdownMenuItem(value: 'toRoot', child: Text('Explore to Root')),
+          ],
+          onChanged: (value) {
+            if (value != null) onTraversalModeChanged?.call(value);
+          },
+        ),
+        DropdownButton<ElementExplorerDisplayMode>(
+          key: const ValueKey<String>(
+            'driver_automation.element_explorer_display_mode',
+          ),
+          value: displayMode,
+          items: const <DropdownMenuItem<ElementExplorerDisplayMode>>[
+            DropdownMenuItem(
+              value: ElementExplorerDisplayMode.pruned,
+              child: Text('Pruned'),
+            ),
+            DropdownMenuItem(
+              value: ElementExplorerDisplayMode.raw,
+              child: Text('Raw'),
+            ),
+          ],
+          onChanged: (value) {
+            if (value != null) onDisplayModeChanged?.call(value);
+          },
+        ),
       ],
     );
   }
@@ -97,12 +138,16 @@ class ElementExplorerViewer extends StatefulWidget {
     required this.truncated,
     this.returnedNodes = 0,
     this.visitedNodes = 0,
+    this.collection,
+    this.displayMode = ElementExplorerDisplayMode.raw,
   });
 
   final ElementExplorerSnapshot snapshot;
   final bool truncated;
   final int returnedNodes;
   final int visitedNodes;
+  final ElementExplorerCollection? collection;
+  final ElementExplorerDisplayMode displayMode;
 
   @override
   State<ElementExplorerViewer> createState() => _ElementExplorerViewerState();
@@ -116,6 +161,7 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
   final _verticalController = ScrollController();
   final _horizontalController = ScrollController();
   String? _selectedNodeId;
+  final _revealedNodeIds = <String>{};
 
   @override
   void initState() {
@@ -129,8 +175,14 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.snapshot, widget.snapshot)) {
       _rowKeys.clear();
+      _revealedNodeIds.clear();
       _resetSelection();
       _scheduleFocusTarget();
+    } else if (oldWidget.displayMode != widget.displayMode &&
+        widget.displayMode == ElementExplorerDisplayMode.pruned &&
+        _selectedNodeId != null &&
+        _projection.findByRawNodeId(_selectedNodeId!) == null) {
+      _revealedNodeIds.add(_selectedNodeId!);
     }
   }
 
@@ -143,46 +195,68 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
 
   void _resetSelection() {
     _expandedNodeIds.clear();
-    final path = _pathToTarget(widget.snapshot.root);
-    _selectedNodeId = path.isEmpty ? widget.snapshot.root.nodeId : path.last;
+    final path = _pathToTarget(_projection.root);
+    _selectedNodeId =
+        path.isEmpty ? widget.snapshot.root.nodeId : _rawIdFor(path.last);
     _expandedNodeIds.addAll(path.take(path.length - 1));
-    if (path.isEmpty && widget.snapshot.root.children.isNotEmpty) {
-      _expandedNodeIds.add(widget.snapshot.root.nodeId);
+    if (path.isEmpty && _projection.root.children.isNotEmpty) {
+      _expandedNodeIds.add(_projection.root.projectionId);
     }
   }
 
-  List<String> _pathToTarget(ElementExplorerNode node) {
-    if (node.isTarget) return <String>[node.nodeId];
+  ElementExplorerProjection get _projection =>
+      widget.displayMode == ElementExplorerDisplayMode.raw
+          ? ElementExplorerPruningEngine.raw(widget.snapshot)
+          : ElementExplorerPruningEngine.project(
+            widget.snapshot,
+            revealedNodeIds: _revealedNodeIds,
+          );
+
+  List<String> _pathToTarget(ElementExplorerProjectionNode node) {
+    if (node.rawNode?.isTarget == true) return <String>[node.projectionId];
     for (final child in node.children) {
       final path = _pathToTarget(child);
-      if (path.isNotEmpty) return <String>[node.nodeId, ...path];
+      if (path.isNotEmpty) return <String>[node.projectionId, ...path];
     }
     return const <String>[];
-  }
-
-  ElementExplorerNode? _findNode(ElementExplorerNode node, String? nodeId) {
-    if (node.nodeId == nodeId) return node;
-    for (final child in node.children) {
-      final result = _findNode(child, nodeId);
-      if (result != null) return result;
-    }
-    return null;
   }
 
   List<_VisibleExplorerNode> _visibleNodes() {
     final result = <_VisibleExplorerNode>[];
 
-    void visit(ElementExplorerNode node, int depth) {
+    void visit(ElementExplorerProjectionNode node, int depth) {
       result.add(_VisibleExplorerNode(node: node, depth: depth));
-      if (_expandedNodeIds.contains(node.nodeId)) {
+      if (_expandedNodeIds.contains(node.projectionId)) {
         for (final child in node.children) {
           visit(child, depth + 1);
         }
       }
     }
 
-    visit(widget.snapshot.root, 0);
+    visit(_projection.root, 0);
     return result;
+  }
+
+  String _rawIdFor(String projectionId) {
+    ElementExplorerProjectionNode? visit(ElementExplorerProjectionNode node) {
+      if (node.projectionId == projectionId) return node;
+      for (final child in node.children) {
+        final result = visit(child);
+        if (result != null) return result;
+      }
+      return null;
+    }
+
+    return visit(_projection.root)?.rawNodeId ?? projectionId;
+  }
+
+  ElementExplorerNode? _findRawNode(ElementExplorerNode node, String? nodeId) {
+    if (node.nodeId == nodeId) return node;
+    for (final child in node.children) {
+      final result = _findRawNode(child, nodeId);
+      if (result != null) return result;
+    }
+    return null;
   }
 
   void _scheduleFocusTarget() {
@@ -193,9 +267,9 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
   }
 
   void _focusTarget() {
-    final path = _pathToTarget(widget.snapshot.root);
+    final path = _pathToTarget(_projection.root);
     final selectedNodeId =
-        path.isEmpty ? widget.snapshot.root.nodeId : path.last;
+        path.isEmpty ? widget.snapshot.root.nodeId : _rawIdFor(path.last);
     final changed =
         _selectedNodeId != selectedNodeId ||
         !_expandedNodeIds.containsAll(path.take(path.length - 1));
@@ -222,7 +296,7 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
 
   @override
   Widget build(BuildContext context) {
-    final selected = _findNode(widget.snapshot.root, _selectedNodeId);
+    final selected = _findRawNode(widget.snapshot.root, _selectedNodeId);
     final tree = _buildTree(context);
     final properties = _buildProperties(context, selected);
     final content = LayoutBuilder(
@@ -250,9 +324,15 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
 
   Widget _buildTree(BuildContext context) {
     final visibleNodes = _visibleNodes();
+    final projection = _projection;
     final stats =
         '${widget.returnedNodes} nodes · ${widget.visitedNodes} visited'
         '${widget.truncated ? ' · Truncated' : ''}';
+    final detailedStats =
+        '$stats · Original ${projection.originalNodeCount} · '
+        'Visible ${projection.visibleNodeCount} · Hidden ${projection.hiddenNodeCount}'
+        '${widget.collection == null ? ' · Legacy runtime' : ''}'
+        '${widget.collection?.stopReasons.isNotEmpty == true ? ' · ${widget.collection!.stopReasons.join(', ')}' : ''}';
     return RoundedOutlinedBorder(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -265,7 +345,7 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
             includeBottomBorder: true,
             actions: [
               Tooltip(
-                message: stats,
+                message: detailedStats,
                 child: Text(stats, style: Theme.of(context).subtleTextStyle),
               ),
               DevToolsButton(
@@ -281,6 +361,31 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
               ),
             ],
           ),
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: defaultSpacing,
+              vertical: denseSpacing,
+            ),
+            child: Text(
+              'Original ${projection.originalNodeCount} · '
+              'Visible ${projection.visibleNodeCount} · '
+              'Hidden ${projection.hiddenNodeCount}',
+              key: const ValueKey<String>('element_explorer.statistics'),
+              style: Theme.of(context).subtleTextStyle,
+            ),
+          ),
+          if (widget.collection?.stopReasons.isNotEmpty == true)
+            Padding(
+              padding: const EdgeInsets.only(
+                left: defaultSpacing,
+                right: defaultSpacing,
+                bottom: denseSpacing,
+              ),
+              child: Text(
+                'Collection stopped: ${widget.collection!.stopReasons.join(', ')}',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -292,7 +397,7 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
                     for (final item in visibleNodes)
                       KeyedSubtree(
                         key: _rowKeys.putIfAbsent(
-                          item.node.nodeId,
+                          item.node.projectionId,
                           GlobalKey.new,
                         ),
                         child: ConstrainedBox(
@@ -343,20 +448,30 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
 
   Widget _buildNodeRow(
     BuildContext context,
-    ElementExplorerNode node,
+    ElementExplorerProjectionNode node,
     int depth,
   ) {
-    final selected = node.nodeId == _selectedNodeId;
+    final rawNode = node.rawNode;
+    final selected = rawNode?.nodeId == _selectedNodeId;
     final colorScheme = Theme.of(context).colorScheme;
     final hasChildren = node.children.isNotEmpty;
-    final expanded = _expandedNodeIds.contains(node.nodeId);
+    final expanded = _expandedNodeIds.contains(node.projectionId);
     final row = SizedBox(
       height: _rowHeight,
       child: Material(
         color: selected ? colorScheme.primaryContainer : Colors.transparent,
         child: InkWell(
-          key: ValueKey<String>('element_explorer.node.${node.nodeId}'),
-          onTap: () => setState(() => _selectedNodeId = node.nodeId),
+          key: ValueKey<String>('element_explorer.node.${node.projectionId}'),
+          onTap: () {
+            if (node.synthetic && node.hiddenNodeIds.isNotEmpty) {
+              setState(() {
+                _revealedNodeIds.addAll(node.hiddenNodeIds);
+                _selectedNodeId = node.hiddenNodeIds.first;
+              });
+            } else if (rawNode != null) {
+              setState(() => _selectedNodeId = rawNode.nodeId);
+            }
+          },
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -374,9 +489,9 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
                           onPressed: () {
                             setState(() {
                               if (!expanded) {
-                                _expandedNodeIds.add(node.nodeId);
+                                _expandedNodeIds.add(node.projectionId);
                               } else {
-                                _expandedNodeIds.remove(node.nodeId);
+                                _expandedNodeIds.remove(node.projectionId);
                               }
                             });
                           },
@@ -387,7 +502,7 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
               SizedBox(
                 width: 20,
                 child:
-                    node.isTarget
+                    rawNode?.isTarget == true
                         ? DevToolsTooltip(
                           message: 'Inspected target',
                           child: Icon(
@@ -400,41 +515,51 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
                         : null,
               ),
               Icon(
-                Icons.widgets_outlined,
+                node.synthetic
+                    ? Icons.visibility_outlined
+                    : Icons.widgets_outlined,
                 size: 15,
                 color: Theme.of(context).subtleTextStyle.color,
               ),
               const SizedBox(width: denseSpacing),
               Text(
-                node.widgetType,
+                node.synthetic
+                    ? (node.label ?? 'Hidden Elements')
+                    : rawNode!.widgetType,
                 maxLines: 1,
                 softWrap: false,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   fontWeight:
-                      node.isTarget ? FontWeight.w700 : FontWeight.normal,
+                      rawNode?.isTarget == true
+                          ? FontWeight.w700
+                          : FontWeight.normal,
                 ),
               ),
-              if (node.text != null) ...[
+              if (rawNode?.text != null) ...[
                 const SizedBox(width: denseSpacing),
                 Text(
-                  node.text!,
+                  rawNode!.text!,
                   maxLines: 1,
                   softWrap: false,
                   style: Theme.of(context).subtleTextStyle,
                 ),
               ],
-              if (node.key != null) ...[
+              if (rawNode?.key != null) ...[
                 const SizedBox(width: denseSpacing),
                 Text(
-                  _keyInlineLabel(node.key!),
+                  _keyInlineLabel(rawNode!.key!),
                   maxLines: 1,
                   softWrap: false,
                   style: Theme.of(context).subtleTextStyle,
                 ),
               ],
-              if (node.childrenState == 'truncated') ...[
+              if (rawNode?.childrenState == 'truncated') ...[
                 const SizedBox(width: denseSpacing),
                 const _NodeBadge(label: 'TRUNCATED'),
+              ],
+              if (node.synthetic) ...[
+                const SizedBox(width: denseSpacing),
+                const _NodeBadge(label: 'REVEAL'),
               ],
               const SizedBox(width: defaultSpacing),
             ],
@@ -442,7 +567,10 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
         ),
       ),
     );
-    return DevToolsTooltip(message: _nodeTooltip(node), child: row);
+    return DevToolsTooltip(
+      message: rawNode == null ? node.reason : _nodeTooltip(rawNode),
+      child: row,
+    );
   }
 
   Widget _buildProperties(BuildContext context, ElementExplorerNode? node) {
@@ -573,7 +701,7 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
 class _VisibleExplorerNode {
   const _VisibleExplorerNode({required this.node, required this.depth});
 
-  final ElementExplorerNode node;
+  final ElementExplorerProjectionNode node;
   final int depth;
 }
 

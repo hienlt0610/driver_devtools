@@ -363,11 +363,15 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey('driver_automation.element_explorer_format_button')),
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_format_button'),
+      ),
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey('driver_automation.element_explorer_reset_button')),
+      find.byKey(
+        const ValueKey('driver_automation.element_explorer_reset_button'),
+      ),
       findsOneWidget,
     );
     await tester.tap(
@@ -417,11 +421,11 @@ void main() {
     await tester.pump();
 
     expect(transport.executionCalls.single['command'], 'element_explorer');
-    expect(transport.executionCalls.single['ancestorDepth'], '3');
+    expect(transport.executionCalls.single['ancestorDepth'], '32');
     expect(transport.executionCalls.single['descendantDepth'], '1');
     expect(transport.executionCalls.single['includeSiblings'], 'true');
     expect(transport.executionCalls.single['siblingDepth'], '0');
-    expect(transport.executionCalls.single['maxNodes'], '200');
+    expect(transport.executionCalls.single['maxNodes'], '500');
     expect(
       find.byKey(const ValueKey('element_explorer.node.n1')),
       findsOneWidget,
@@ -545,6 +549,73 @@ void main() {
     expect(find.textContaining('TARGET_NOT_FOUND'), findsOneWidget);
     expect(find.byKey(const ValueKey('element_explorer.tree')), findsNothing);
   });
+
+  testWidgets(
+    'switches display mode locally and applies root traversal on inspect',
+    (tester) async {
+      final transport = _ReinspectElementExplorerTransport();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: DriverAutomationPage(transport: transport)),
+        ),
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('driver_automation.element_explorer_tab')),
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(
+          const ValueKey('driver_automation.element_explorer_inspect_button'),
+        ),
+      );
+      await tester.pump();
+      expect(transport.executionCalls, hasLength(1));
+
+      await tester.tap(
+        find.byKey(
+          const ValueKey('driver_automation.element_explorer_options_button'),
+        ),
+      );
+      await tester.pump();
+
+      final displayMode = find.byKey(
+        const ValueKey('driver_automation.element_explorer_display_mode'),
+      );
+      await tester.ensureVisible(displayMode);
+      await tester.tap(displayMode);
+      await tester.pump();
+      await tester.tap(find.text('Raw').last);
+      await tester.pump();
+      expect(transport.executionCalls, hasLength(1));
+
+      final traversalMode = find.byKey(
+        const ValueKey('driver_automation.element_explorer_traversal_mode'),
+      );
+      await tester.ensureVisible(traversalMode);
+      await tester.tap(traversalMode);
+      await tester.pump();
+      await tester.tap(find.text('Explore to Root').last);
+      await tester.pump();
+      expect(transport.executionCalls, hasLength(1));
+      expect(
+        find.byKey(
+          const ValueKey('driver_automation.element_explorer_pending_changes'),
+        ),
+        findsOneWidget,
+      );
+
+      final inspect = find.byKey(
+        const ValueKey('driver_automation.element_explorer_inspect_button'),
+      );
+      await tester.ensureVisible(inspect);
+      await tester.tap(inspect);
+      await tester.pump();
+      expect(transport.executionCalls, hasLength(2));
+      expect(transport.executionCalls[1]['mode'], 'toRoot');
+      expect(transport.executionCalls[1]['ancestorDepth'], '32');
+    },
+  );
 
   testWidgets('preserves the previous snapshot when reinspection fails', (
     tester,

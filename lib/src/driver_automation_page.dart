@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'driver_automation_core.dart';
 import 'driver_automation_service.dart';
 import 'element_explorer_model.dart';
+import 'element_explorer_projection.dart';
 import 'element_explorer_widgets.dart';
 import 'finder_dsl.dart';
 import 'finder_completion.dart';
@@ -32,10 +33,10 @@ class DriverAutomationSession {
       finderResetTemplate = JsonPayloads.defaultFinder,
       commandResetTemplate = JsonPayloads.defaultCommand,
       elementExplorerFinderResetTemplate = JsonPayloads.defaultFinder,
-      elementExplorerAncestorDepthText = '3',
+      elementExplorerAncestorDepthText = '32',
       elementExplorerDescendantDepthText = '1',
       elementExplorerSiblingDepthText = '0',
-      elementExplorerMaxNodesText = '200',
+      elementExplorerMaxNodesText = '500',
       elementExplorerIncludeSiblings = true;
 
   String finderText;
@@ -53,6 +54,9 @@ class DriverAutomationSession {
   String elementExplorerSiblingDepthText;
   String elementExplorerMaxNodesText;
   bool elementExplorerIncludeSiblings;
+  String elementExplorerTraversalMode = 'limited';
+  ElementExplorerDisplayMode elementExplorerDisplayMode =
+      ElementExplorerDisplayMode.pruned;
   String? elementExplorerAppliedFinder;
   Map<String, String>? elementExplorerAppliedOptions;
   bool elementExplorerEditorExpanded = true;
@@ -62,6 +66,7 @@ class DriverAutomationSession {
   DriverExecutionResult? requestDataResult;
   DriverExecutionResult? elementExplorerResult;
   ElementExplorerSnapshot? elementExplorerSnapshot;
+  ElementExplorerCollection? elementExplorerCollection;
   int? elementExplorerReturnedNodes;
   int? elementExplorerVisitedNodes;
   bool elementExplorerTruncated = false;
@@ -520,16 +525,36 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
       _elementExplorerError = 'maxNodes must be between 1 and 2000.';
       return null;
     }
+    options.addAll(<String, String>{
+      'mode': _session.elementExplorerTraversalMode,
+      // An older runtime ignores V2 mode/budget fields, so keep its fallback
+      // ancestor request at the legacy hard cap.
+      if (_session.elementExplorerTraversalMode == 'toRoot')
+        'ancestorDepth': '32',
+      'maxAncestorDepth': '256',
+      'maxContextNodes': '200',
+      'maxVisitedNodes': '1000',
+      'maxReturnedNodes': '$maxNodes',
+    });
     return options;
   }
 
   Map<String, String> _elementExplorerOptionsDraft() {
+    final maxNodes = _elementExplorerMaxNodesEditor.text;
     return <String, String>{
-      'ancestorDepth': _elementExplorerAncestorDepthEditor.text,
+      'ancestorDepth':
+          _session.elementExplorerTraversalMode == 'toRoot'
+              ? '32'
+              : _elementExplorerAncestorDepthEditor.text,
       'descendantDepth': _elementExplorerDescendantDepthEditor.text,
       'includeSiblings': _session.elementExplorerIncludeSiblings.toString(),
       'siblingDepth': _elementExplorerSiblingDepthEditor.text,
-      'maxNodes': _elementExplorerMaxNodesEditor.text,
+      'maxNodes': maxNodes,
+      'mode': _session.elementExplorerTraversalMode,
+      'maxAncestorDepth': '256',
+      'maxContextNodes': '200',
+      'maxVisitedNodes': '1000',
+      'maxReturnedNodes': maxNodes,
     };
   }
 
@@ -626,6 +651,7 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
           } else {
             _elementExplorerError = null;
             _session.elementExplorerSnapshot = parsed.snapshot;
+            _session.elementExplorerCollection = parsed.collection;
             _session.elementExplorerReturnedNodes = parsed.returnedNodes;
             _session.elementExplorerVisitedNodes = parsed.visitedNodes;
             _session.elementExplorerTruncated = parsed.truncated;
@@ -1329,7 +1355,8 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
   String _elementExplorerOptionsSummary([Map<String, String>? options]) {
     final values = options ?? _elementExplorerOptionsDraft();
     final siblings = values['includeSiblings'] == 'true' ? 'on' : 'off';
-    return 'Ancestors ${values['ancestorDepth']} · '
+    final mode = values['mode'] == 'toRoot' ? 'Explore to Root' : 'Limited';
+    return '$mode · Ancestors ${values['ancestorDepth']} · '
         'Descendants ${values['descendantDepth']} · '
         'Siblings $siblings · '
         'Max ${values['maxNodes']}';
@@ -1569,6 +1596,18 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
                         () => _session.elementExplorerIncludeSiblings = value,
                       );
                     },
+                    traversalMode: _session.elementExplorerTraversalMode,
+                    onTraversalModeChanged: (value) {
+                      setState(
+                        () => _session.elementExplorerTraversalMode = value,
+                      );
+                    },
+                    displayMode: _session.elementExplorerDisplayMode,
+                    onDisplayModeChanged: (value) {
+                      setState(
+                        () => _session.elementExplorerDisplayMode = value,
+                      );
+                    },
                   ),
                 ],
                 if (snapshot != null) ...[
@@ -1578,6 +1617,8 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
                     truncated: _session.elementExplorerTruncated,
                     returnedNodes: _session.elementExplorerReturnedNodes ?? 0,
                     visitedNodes: _session.elementExplorerVisitedNodes ?? 0,
+                    collection: _session.elementExplorerCollection,
+                    displayMode: _session.elementExplorerDisplayMode,
                   ),
                 ] else if (!isProcessing && _elementExplorerError == null)
                   Container(

@@ -1,4 +1,5 @@
 import 'package:driver_devtools/src/element_explorer_model.dart';
+import 'package:driver_devtools/src/element_explorer_projection.dart';
 import 'package:driver_devtools/src/element_explorer_widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -313,6 +314,47 @@ void main() {
 
     expect(find.text('ContainerElement'), findsOneWidget);
     expect(find.text('Root text'), findsNWidgets(2));
+  });
+
+  testWidgets('reveals hidden Elements in Pruned mode without a request', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 720,
+            height: 600,
+            child: ElementExplorerViewer(
+              snapshot: _finderMetadataSnapshot(),
+              truncated: false,
+              returnedNodes: 7,
+              visitedNodes: 7,
+              displayMode: ElementExplorerDisplayMode.pruned,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('element_explorer.node.object')),
+      findsNothing,
+    );
+    final hiddenGroup = find.byKey(
+      const ValueKey('element_explorer.node.group:root'),
+    );
+    expect(hiddenGroup, findsOneWidget);
+
+    await tester.tap(hiddenGroup);
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('element_explorer.node.object')),
+      findsOneWidget,
+    );
+    expect(find.text('ObjectKey'), findsWidgets);
   });
 }
 

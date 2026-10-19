@@ -255,4 +255,101 @@ void main() {
     });
     expect(response['error']['code'], 'INVALID_ARGUMENT');
   });
+
+  testWidgets('reports V2 collection status and separate context budget', (
+    tester,
+  ) async {
+    await pumpFixture(tester);
+
+    final response = await inspect(<String, String>{
+      'finderType': 'ByText',
+      'text': '10.500.000 VNĐ',
+      'mode': 'toRoot',
+      'ancestorDepth': '32',
+      'maxAncestorDepth': '256',
+      'descendantDepth': '0',
+      'includeSiblings': 'false',
+      'siblingDepth': '0',
+      'maxContextNodes': '0',
+      'maxVisitedNodes': '1000',
+      'maxReturnedNodes': '500',
+      'maxNodes': '500',
+    });
+
+    final collection = Map<String, dynamic>.from(response['collection'] as Map);
+    expect(collection['mode'], 'toRoot');
+    expect(collection['rootReached'], isTrue);
+    expect(collection['contextNodesCollected'], 0);
+    expect(collection['stopReasons'], isEmpty);
+    expect(response['truncated'], isFalse);
+  });
+
+  testWidgets('Explore to Root traverses past the legacy depth cap', (
+    tester,
+  ) async {
+    Widget content = const Text('deep target');
+    for (var index = 0; index < 40; index++) {
+      content = _DeepWrapper(child: content);
+    }
+    await tester.pumpWidget(MaterialApp(home: content));
+
+    final response = await inspect(<String, String>{
+      'finderType': 'ByText',
+      'text': 'deep target',
+      'mode': 'toRoot',
+      'maxAncestorDepth': '256',
+      'descendantDepth': '0',
+      'includeSiblings': 'false',
+      'maxContextNodes': '0',
+      'maxVisitedNodes': '1000',
+      'maxReturnedNodes': '500',
+    });
+
+    final collection = Map<String, dynamic>.from(response['collection'] as Map);
+    expect(collection['ancestorLevelsCollected'], greaterThan(32));
+    expect(collection['rootReached'], isTrue);
+    expect(response['truncated'], isFalse);
+  });
+
+  testWidgets(
+    'V2 resource limits preserve the target and report stop reasons',
+    (tester) async {
+      await pumpFixture(tester);
+
+      final response = await inspect(<String, String>{
+        'finderType': 'ByText',
+        'text': '10.500.000 VNĐ',
+        'mode': 'toRoot',
+        'maxAncestorDepth': '256',
+        'descendantDepth': '1',
+        'includeSiblings': 'false',
+        'maxContextNodes': '200',
+        'maxVisitedNodes': '2',
+        'maxReturnedNodes': '1',
+      });
+
+      final collection = Map<String, dynamic>.from(
+        response['collection'] as Map,
+      );
+      expect(collection['rootReached'], isFalse);
+      expect(
+        collection['stopReasons'],
+        containsAll(<String>['NODE_VISIT_LIMIT', 'RESPONSE_NODE_LIMIT']),
+      );
+      expect(response['truncated'], isTrue);
+      expect(
+        Map<String, dynamic>.from(response['root'] as Map)['isTarget'],
+        isTrue,
+      );
+    },
+  );
+}
+
+class _DeepWrapper extends StatelessWidget {
+  const _DeepWrapper({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => child;
 }

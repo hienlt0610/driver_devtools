@@ -22,22 +22,49 @@ class ElementExplorerOptions {
     this.includeSiblings = true,
     this.siblingDepth = 0,
     this.maxNodes = 200,
+    this.mode = 'limited',
+    this.maxAncestorDepth = 256,
+    this.maxContextNodes = 200,
+    this.maxVisitedNodes = 1000,
+    this.maxReturnedNodes = 500,
+    this.usesV2 = false,
   });
 
   static const int maxDepth = 32;
+  static const int maxAncestorDepthBudget = 256;
   static const int maxNodeBudget = 2000;
+  static const int maxVisitedNodeBudget = 10000;
 
   final int ancestorDepth;
   final int descendantDepth;
   final bool includeSiblings;
   final int siblingDepth;
   final int maxNodes;
+  final String mode;
+  final int maxAncestorDepth;
+  final int maxContextNodes;
+  final int maxVisitedNodes;
+  final int maxReturnedNodes;
+  final bool usesV2;
 
   factory ElementExplorerOptions.fromParams(Map<String, String> params) {
+    final bool usesV2 = params.keys.any(
+      <String>{
+        'mode',
+        'maxAncestorDepth',
+        'maxContextNodes',
+        'maxVisitedNodes',
+        'maxReturnedNodes',
+      }.contains,
+    );
+    final String mode = params['mode'] ?? 'limited';
+    if (mode != 'limited' && mode != 'toRoot') {
+      throw FormatException('mode must be limited or toRoot');
+    }
     final int ancestorDepth = _readInt(
       params,
       'ancestorDepth',
-      defaultValue: 3,
+      defaultValue: usesV2 ? maxDepth : 3,
     );
     final int descendantDepth = _readInt(
       params,
@@ -50,7 +77,31 @@ class ElementExplorerOptions {
       defaultValue: true,
     );
     final int siblingDepth = _readInt(params, 'siblingDepth', defaultValue: 0);
-    final int maxNodes = _readInt(params, 'maxNodes', defaultValue: 200);
+    final int maxNodes = _readInt(
+      params,
+      'maxNodes',
+      defaultValue: usesV2 ? 500 : 200,
+    );
+    final int maxAncestorDepth = _readInt(
+      params,
+      'maxAncestorDepth',
+      defaultValue: maxAncestorDepthBudget,
+    );
+    final int maxContextNodes = _readInt(
+      params,
+      'maxContextNodes',
+      defaultValue: 200,
+    );
+    final int maxVisitedNodes = _readInt(
+      params,
+      'maxVisitedNodes',
+      defaultValue: 1000,
+    );
+    final int maxReturnedNodes = _readInt(
+      params,
+      'maxReturnedNodes',
+      defaultValue: maxNodes,
+    );
 
     for (final MapEntry<String, int> entry in <MapEntry<String, int>>[
       MapEntry<String, int>('ancestorDepth', ancestorDepth),
@@ -64,6 +115,26 @@ class ElementExplorerOptions {
     if (maxNodes <= 0 || maxNodes > maxNodeBudget) {
       throw FormatException('maxNodes must be between 1 and $maxNodeBudget');
     }
+    if (maxAncestorDepth <= 0 || maxAncestorDepth > maxAncestorDepthBudget) {
+      throw FormatException(
+        'maxAncestorDepth must be between 1 and $maxAncestorDepthBudget',
+      );
+    }
+    if (maxContextNodes < 0 || maxContextNodes > maxNodeBudget) {
+      throw FormatException(
+        'maxContextNodes must be between 0 and $maxNodeBudget',
+      );
+    }
+    if (maxVisitedNodes <= 0 || maxVisitedNodes > maxVisitedNodeBudget) {
+      throw FormatException(
+        'maxVisitedNodes must be between 1 and $maxVisitedNodeBudget',
+      );
+    }
+    if (maxReturnedNodes <= 0 || maxReturnedNodes > maxNodeBudget) {
+      throw FormatException(
+        'maxReturnedNodes must be between 1 and $maxNodeBudget',
+      );
+    }
 
     return ElementExplorerOptions(
       ancestorDepth: ancestorDepth,
@@ -71,16 +142,34 @@ class ElementExplorerOptions {
       includeSiblings: includeSiblings,
       siblingDepth: siblingDepth,
       maxNodes: maxNodes,
+      mode: mode,
+      maxAncestorDepth: maxAncestorDepth,
+      maxContextNodes: maxContextNodes,
+      maxVisitedNodes: maxVisitedNodes,
+      maxReturnedNodes: maxReturnedNodes,
+      usesV2: usesV2,
     );
   }
 
-  Map<String, String> toParams() => <String, String>{
-    'ancestorDepth': '$ancestorDepth',
-    'descendantDepth': '$descendantDepth',
-    'includeSiblings': '$includeSiblings',
-    'siblingDepth': '$siblingDepth',
-    'maxNodes': '$maxNodes',
-  };
+  Map<String, String> toParams() {
+    final params = <String, String>{
+      'ancestorDepth': '$ancestorDepth',
+      'descendantDepth': '$descendantDepth',
+      'includeSiblings': '$includeSiblings',
+      'siblingDepth': '$siblingDepth',
+      'maxNodes': '$maxNodes',
+    };
+    if (usesV2) {
+      params.addAll(<String, String>{
+        'mode': mode,
+        'maxAncestorDepth': '$maxAncestorDepth',
+        'maxContextNodes': '$maxContextNodes',
+        'maxVisitedNodes': '$maxVisitedNodes',
+        'maxReturnedNodes': '$maxReturnedNodes',
+      });
+    }
+    return params;
+  }
 
   static int _readInt(
     Map<String, String> params,
@@ -340,9 +429,17 @@ class _ElementSnapshot {
   final List<Element> _path = <Element>[];
   final Map<Element, Element> _pathChildren = <Element, Element>{};
   final Map<Element, int> _pathIndexes = <Element, int>{};
+  final Set<Element> _visited = Set<Element>.identity();
+  final Set<String> _stopReasons = <String>{};
   int _returnedNodes = 0;
-  int _visitedNodes = 0;
+  int _contextNodes = 0;
+  int _legacyVisitedNodes = 0;
   bool _truncated = false;
+  bool _ancestorDepthLimitReached = false;
+  bool _visitLimitReached = false;
+
+  int get _returnedLimit =>
+      options.usesV2 ? options.maxReturnedNodes : options.maxNodes;
 
   _ElementSnapshotData build() {
     if (!target.mounted) {
@@ -352,51 +449,116 @@ class _ElementSnapshot {
       );
     }
 
+    _markVisited(target);
     final List<Element> ancestors = <Element>[];
-    if (options.ancestorDepth > 0) {
+    bool reachedRoot = false;
+    if (options.mode == 'toRoot' && options.usesV2) {
       target.visitAncestorElements((Element ancestor) {
+        if (!_markVisited(ancestor)) return false;
+        if (ancestors.length >= options.maxAncestorDepth) {
+          _ancestorDepthLimitReached = true;
+          _stopReasons.add('ANCESTOR_DEPTH_LIMIT');
+          return false;
+        }
+        ancestors.add(ancestor);
+        return true;
+      });
+      reachedRoot = !_ancestorDepthLimitReached && !_visitLimitReached;
+    } else if (options.ancestorDepth > 0) {
+      target.visitAncestorElements((Element ancestor) {
+        if (!_markVisited(ancestor)) return false;
         ancestors.add(ancestor);
         return ancestors.length < options.ancestorDepth;
       });
     }
+
     _path.addAll(ancestors.reversed);
     _path.add(target);
-    if (options.maxNodes < _path.length) {
+    if (!options.usesV2 && options.maxNodes < _path.length) {
       throw const _ElementExplorerFailure(
         'NODE_BUDGET_TOO_SMALL',
         'maxNodes is smaller than the required ancestor path',
       );
     }
+    if (options.usesV2 && _returnedLimit < _path.length) {
+      final int ancestorSlots = (_returnedLimit - 1).clamp(0, ancestors.length);
+      final int firstAncestor = ancestors.length - ancestorSlots;
+      _path
+        ..clear()
+        ..addAll(ancestors.reversed.skip(firstAncestor))
+        ..add(target);
+      _stopReasons.add('RESPONSE_NODE_LIMIT');
+    }
 
     for (int index = 0; index < _path.length; index++) {
       _pathIndexes[_path[index]] = index;
-      _visitedNodes++;
       if (index + 1 < _path.length) {
         _pathChildren[_path[index]] = _path[index + 1];
       }
     }
 
     final Map<String, dynamic> root = _buildPathNode(_path.first, null);
+    final bool truncated =
+        options.usesV2 ? _stopReasons.isNotEmpty : _truncated;
     return _ElementSnapshotData(
       root: root,
       returnedNodes: _returnedNodes,
-      visitedNodes: _visitedNodes,
-      truncated: _truncated,
+      visitedNodes: options.usesV2 ? _visited.length : _legacyVisitedNodes,
+      truncated: truncated,
+      collection:
+          options.usesV2
+              ? <String, dynamic>{
+                'mode': options.mode,
+                'ancestorLevelsCollected': ancestors.length,
+                'rootReached': options.mode == 'toRoot' ? reachedRoot : null,
+                'contextNodesCollected': _contextNodes,
+                'stopReasons': _stopReasons.toList(growable: false),
+                'limits': <String, dynamic>{
+                  'maxAncestorDepth': options.maxAncestorDepth,
+                  'maxContextNodes': options.maxContextNodes,
+                  'maxVisitedNodes': options.maxVisitedNodes,
+                  'maxReturnedNodes': options.maxReturnedNodes,
+                },
+              }
+              : null,
     );
+  }
+
+  bool _markVisited(Element element) {
+    if (!options.usesV2) {
+      _legacyVisitedNodes++;
+      return true;
+    }
+    if (_visited.contains(element)) return true;
+    if (options.usesV2 && _visited.length >= options.maxVisitedNodes) {
+      _visitLimitReached = true;
+      _stopReasons.add('NODE_VISIT_LIMIT');
+      return false;
+    }
+    _visited.add(element);
+    return true;
+  }
+
+  bool _canBuildContext() {
+    if (_returnedNodes >= _returnedLimit) {
+      _truncated = true;
+      _stopReasons.add('RESPONSE_NODE_LIMIT');
+      return false;
+    }
+    if (options.usesV2 && _contextNodes >= options.maxContextNodes) {
+      _stopReasons.add('CONTEXT_NODE_LIMIT');
+      return false;
+    }
+    return true;
   }
 
   Map<String, dynamic> _buildPathNode(Element element, String? parentId) {
     final int pathIndex = _pathIndexes[element]!;
     final Map<String, dynamic> node = _newNode(element, parentId);
     if (pathIndex == _path.length - 1) {
-      _populateDepthChildren(
-        node,
-        element,
-        options.descendantDepth,
-        isTarget: true,
-      );
+      _populateDepthChildren(node, element, options.descendantDepth);
     } else {
-      _populatePathChildren(node, element, pathIndex);
+      _populatePathChildren(node, element);
     }
     return node;
   }
@@ -406,22 +568,30 @@ class _ElementSnapshot {
     String parentId,
     int remainingDepth,
   ) {
-    final Map<String, dynamic> node = _newNode(element, parentId);
+    final Map<String, dynamic> node = _newNode(
+      element,
+      parentId,
+      context: true,
+    );
     _populateDepthChildren(node, element, remainingDepth);
     return node;
   }
 
-  Map<String, dynamic> _newNode(Element element, String? parentId) {
+  Map<String, dynamic> _newNode(
+    Element element,
+    String? parentId, {
+    bool context = false,
+  }) {
     if (!element.mounted) {
       throw const _ElementExplorerFailure(
         'INSPECTION_FAILED',
         'An Element was unmounted during inspection',
       );
     }
-    if (_returnedNodes >= options.maxNodes) {
+    if (_returnedNodes >= _returnedLimit) {
       throw const _ElementExplorerFailure(
         'NODE_BUDGET_TOO_SMALL',
-        'maxNodes cannot contain the required Element path',
+        'The response budget cannot contain the required Element path',
       );
     }
 
@@ -438,28 +608,28 @@ class _ElementSnapshot {
       'children': <Map<String, dynamic>>[],
     };
     _returnedNodes++;
+    if (context) _contextNodes++;
     _addMetadata(node, element);
     return node;
   }
 
-  void _populatePathChildren(
-    Map<String, dynamic> node,
-    Element element,
-    int pathIndex,
-  ) {
-    final List<Element> children = _childrenOf(element);
-    final Element pathChild = _pathChildren[element]!;
+  void _populatePathChildren(Map<String, dynamic> node, Element element) {
+    final _ChildrenResult result = _childrenOf(element);
+    final List<Element> children = result.children;
+    final Element? pathChild = _pathChildren[element];
+    if (pathChild == null) {
+      node['childrenState'] = result.omitted ? 'truncated' : 'complete';
+      return;
+    }
     final Map<Element, Map<String, dynamic>> serialized =
         <Element, Map<String, dynamic>>{};
 
     // Build the required path branch first so optional siblings cannot consume
     // the budget needed to keep the target reachable.
     serialized[pathChild] = _buildPathNode(pathChild, node['nodeId'] as String);
-    bool omittedSibling = false;
+    bool omittedSibling = result.omitted;
     for (final Element child in children) {
-      if (identical(child, pathChild)) {
-        continue;
-      }
+      if (identical(child, pathChild)) continue;
       if (!options.includeSiblings) {
         omittedSibling = true;
         continue;
@@ -478,9 +648,7 @@ class _ElementSnapshot {
     final List<Map<String, dynamic>> outputChildren = <Map<String, dynamic>>[];
     for (final Element child in children) {
       final Map<String, dynamic>? serializedChild = serialized[child];
-      if (serializedChild != null) {
-        outputChildren.add(serializedChild);
-      }
+      if (serializedChild != null) outputChildren.add(serializedChild);
     }
     node['children'] = outputChildren;
     node['childrenState'] =
@@ -490,43 +658,42 @@ class _ElementSnapshot {
   }
 
   Map<String, dynamic>? _tryBuildSibling(Element element, String parentId) {
-    if (_returnedNodes >= options.maxNodes) {
-      _truncated = true;
-      return null;
-    }
+    if (!_canBuildContext()) return null;
     return _buildDepthNode(element, parentId, options.siblingDepth);
   }
 
   void _populateDepthChildren(
     Map<String, dynamic> node,
     Element element,
-    int remainingDepth, {
-    bool isTarget = false,
-  }) {
+    int remainingDepth,
+  ) {
     if (remainingDepth <= 0) {
       node['childrenState'] = 'notRequested';
       return;
     }
 
-    final List<Element> children = _childrenOf(element);
-    final List<Map<String, dynamic>> outputChildren = <Map<String, dynamic>>[];
-    bool omittedChild = false;
-    for (final Element child in children) {
-      if (_returnedNodes >= options.maxNodes) {
-        _truncated = true;
+    final _ChildrenResult result = _childrenOf(element);
+    final List<Element> outputChildren = <Element>[];
+    bool omittedChild = result.omitted;
+    final List<Map<String, dynamic>> serialized = <Map<String, dynamic>>[];
+    for (final Element child in result.children) {
+      if (!_canBuildContext()) {
         omittedChild = true;
         continue;
       }
-      outputChildren.add(
+      serialized.add(
         _buildDepthNode(child, node['nodeId'] as String, remainingDepth - 1),
       );
+      outputChildren.add(child);
     }
-    node['children'] = outputChildren;
+    node['children'] = serialized;
     node['childrenState'] =
-        omittedChild ? 'truncated' : (children.isEmpty ? 'empty' : 'complete');
+        omittedChild
+            ? 'truncated'
+            : (outputChildren.isEmpty ? 'empty' : 'complete');
   }
 
-  List<Element> _childrenOf(Element element) {
+  _ChildrenResult _childrenOf(Element element) {
     if (!element.mounted) {
       throw const _ElementExplorerFailure(
         'INSPECTION_FAILED',
@@ -534,11 +701,17 @@ class _ElementSnapshot {
       );
     }
     final List<Element> children = <Element>[];
+    bool omitted = false;
+    // visitChildren cannot stop enumeration early; the budget stops recording
+    // and recursive collection after the limit is reached.
     element.visitChildren((Element child) {
-      _visitedNodes++;
-      children.add(child);
+      if (_markVisited(child)) {
+        children.add(child);
+      } else {
+        omitted = true;
+      }
     });
-    return children;
+    return _ChildrenResult(children, omitted);
   }
 
   void _addMetadata(Map<String, dynamic> node, Element element) {
@@ -564,24 +737,34 @@ class _ElementSnapshot {
   }
 }
 
+class _ChildrenResult {
+  const _ChildrenResult(this.children, this.omitted);
+
+  final List<Element> children;
+  final bool omitted;
+}
+
 class _ElementSnapshotData {
   const _ElementSnapshotData({
     required this.root,
     required this.returnedNodes,
     required this.visitedNodes,
     required this.truncated,
+    this.collection,
   });
 
   final Map<String, dynamic> root;
   final int returnedNodes;
   final int visitedNodes;
   final bool truncated;
+  final Map<String, dynamic>? collection;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'matchCount': 1,
     'returnedNodes': returnedNodes,
     'visitedNodes': visitedNodes,
     'truncated': truncated,
+    if (collection != null) 'collection': collection,
     'root': root,
   };
 }

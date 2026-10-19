@@ -46,6 +46,10 @@ void main() {
     expect(result.snapshot!.root.children.single.parentId, 'n0');
     expect(result.snapshot!.root.children.single.isTarget, isTrue);
     expect(result.snapshot!.root.key!['kind'], 'ValueKey');
+    expect(
+      () => result.snapshot!.root.key!['kind'] = 'ObjectKey',
+      throwsUnsupportedError,
+    );
   });
 
   test('parses a runtime domain error without requiring a root', () {
@@ -89,5 +93,44 @@ void main() {
       }),
       throwsA(isA<ElementExplorerResponseException>()),
     );
+  });
+
+  test('parses optional V2 collection metadata', () {
+    final result = ElementExplorerResponse.parse(<String, dynamic>{
+      'schemaVersion': 1,
+      'matchCount': 1,
+      'returnedNodes': 1,
+      'visitedNodes': 2,
+      'truncated': false,
+      'collection': <String, dynamic>{
+        'mode': 'toRoot',
+        'ancestorLevelsCollected': 1,
+        'rootReached': true,
+        'contextNodesCollected': 0,
+        'stopReasons': <String>[],
+        'limits': <String, dynamic>{
+          'maxAncestorDepth': 256,
+          'maxContextNodes': 200,
+          'maxVisitedNodes': 1000,
+          'maxReturnedNodes': 500,
+        },
+      },
+      'root': <String, dynamic>{
+        'nodeId': 'n0',
+        'parentId': null,
+        'widgetType': 'Text',
+        'elementType': 'StatelessElement',
+        'key': null,
+        'text': 'target',
+        'semanticsIdentifier': null,
+        'isTarget': true,
+        'childrenState': 'notRequested',
+        'children': <Map<String, dynamic>>[],
+      },
+    });
+
+    expect(result.collection!.mode, 'toRoot');
+    expect(result.collection!.rootReached, isTrue);
+    expect(result.collection!.limits.maxReturnedNodes, 500);
   });
 }
