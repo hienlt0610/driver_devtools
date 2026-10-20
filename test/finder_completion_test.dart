@@ -38,7 +38,7 @@ void main() {
   });
 
   test('offers enum values after parsing nested parentheses and strings', () {
-    const source = 'type("a),b").descendant(textMatch("Login", co';
+    const source = 'type("a),b").descendant(text("Login", co';
     final context = FinderCompletionContextAnalyzer.analyze(
       source,
       source.length,
@@ -62,13 +62,13 @@ void main() {
   });
 
   test('provides a parameter signature inside an incomplete call', () {
-    const source = 'textMatch("Login", ';
+    const source = 'text("Login", ';
     final context = FinderCompletionContextAnalyzer.analyze(
       source,
       source.length,
     );
 
-    expect(context.signature, 'textMatch(text, matchType, ignoreCase?)');
+    expect(context.signature, 'text(value: String, matchType?, ignoreCase?)');
     expect(context.items, isNotEmpty);
   });
 

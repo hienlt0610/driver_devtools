@@ -171,16 +171,13 @@ class FinderDslCodec {
           _ => throw _argumentError(definition.name, 0, 'a string or integer'),
         };
       case FinderDslMappingKind.byText:
-        return {
-          'finderType': definition.finderType,
-          'text': _stringArgument(definition, arguments, 0),
-        };
-      case FinderDslMappingKind.textMatch:
         final result = <String, dynamic>{
           'finderType': definition.finderType,
           'text': _stringArgument(definition, arguments, 0),
-          'matchType': _enumArgument(definition, arguments, 1),
         };
+        if (arguments.length >= 2) {
+          result['matchType'] = _enumArgument(definition, arguments, 1);
+        }
         if (arguments.length == 3) {
           result['ignoreCase'] = _boolArgument(definition, arguments, 2);
         }
@@ -271,7 +268,6 @@ class FinderDslCodec {
       case FinderDslMappingKind.byType:
       case FinderDslMappingKind.valueKey:
       case FinderDslMappingKind.byText:
-      case FinderDslMappingKind.textMatch:
       case FinderDslMappingKind.semanticsLabel:
       case FinderDslMappingKind.semanticsIdentifier:
       case FinderDslMappingKind.tooltipMessage:
@@ -312,14 +308,18 @@ class FinderDslCodec {
               : FinderAstStringValue(key),
         ]);
       case FinderDslMappingKind.byText:
-        return FinderAst(definition.name, [
-          FinderAstStringValue(_requiredString(finder, 'text', 'text')),
-        ]);
-      case FinderDslMappingKind.textMatch:
         final arguments = <FinderAstValue>[
           FinderAstStringValue(_requiredString(finder, 'text', 'text')),
-          FinderAstEnumValue(_requiredString(finder, 'matchType', 'matchType')),
         ];
+        if (finder.containsKey('matchType')) {
+          arguments.add(
+            FinderAstEnumValue(
+              _requiredString(finder, 'matchType', 'matchType'),
+            ),
+          );
+        } else if (finder.containsKey('ignoreCase')) {
+          arguments.add(const FinderAstEnumValue('exact'));
+        }
         if (finder.containsKey('ignoreCase')) {
           arguments.add(
             FinderAstBooleanValue(_requiredBool(finder, 'ignoreCase')),

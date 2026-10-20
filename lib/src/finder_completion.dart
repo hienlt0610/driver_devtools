@@ -47,15 +47,6 @@ class FinderCompletionRegistry {
     FinderDslMemberKind.chain,
   );
 
-  static final List<FinderCompletionItem> textMatchValues = _enumItems(
-    FinderDslMetadataRegistry.all
-        .firstWhere(
-          (definition) => definition.mapping == FinderDslMappingKind.textMatch,
-        )
-        .argumentAt(1)!,
-    description: (value) => 'Use the $value text matching strategy.',
-  );
-
   static final List<FinderCompletionItem> booleans = List.unmodifiable([
     for (final value in ['true', 'false'])
       FinderCompletionItem(
@@ -83,10 +74,10 @@ class FinderCompletionRegistry {
 
     return switch (argument.kind) {
       FinderDslArgumentKind.finder => roots,
-      FinderDslArgumentKind.enumValue =>
-        definition?.mapping == FinderDslMappingKind.textMatch
-            ? textMatchValues
-            : _enumItems(argument),
+      FinderDslArgumentKind.enumValue => _enumItems(
+        argument,
+        description: (value) => 'Use the $value text matching strategy.',
+      ),
       FinderDslArgumentKind.boolean => booleans,
       _ => const [],
     };

@@ -36,7 +36,7 @@ void main() {
   test('generates text match with the Java enum and ignoreCase', () {
     expect(
       JavaFinderGenerator.generate({
-        'finderType': 'ByTextMatch',
+        'finderType': 'ByText',
         'text': 'Completed',
         'matchType': 'contains',
         'ignoreCase': true,
@@ -75,6 +75,22 @@ void main() {
     );
   });
 
+  test('rejects an empty semantics identifier', () {
+    expect(
+      () => JavaFinderGenerator.generate({
+        'finderType': 'BySemanticsIdentifier',
+        'identifier': '  ',
+      }),
+      throwsA(
+        isA<JavaFinderGenerationException>().having(
+          (error) => error.path,
+          'path',
+          'identifier',
+        ),
+      ),
+    );
+  });
+
   test('maps text match strategies and omits a false ignoreCase flag', () {
     for (final entry
         in {
@@ -85,7 +101,7 @@ void main() {
         }.entries) {
       expect(
         JavaFinderGenerator.generate({
-          'finderType': 'ByTextMatch',
+          'finderType': 'ByText',
           'text': 'Order',
           'matchType': entry.key,
           'ignoreCase': false,
@@ -218,7 +234,7 @@ void main() {
   test('escapes Java string literals without changing regex content', () {
     expect(
       JavaFinderGenerator.generate({
-        'finderType': 'ByTextMatch',
+        'finderType': 'ByText',
         'text': 'line "one"\\n',
         'matchType': 'regex',
       }),

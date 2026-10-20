@@ -147,7 +147,39 @@ class ProtocolSchemaRegistry {
     }
 
     _validateObject(payload, schema, path, errors, messages);
+    if (schema.kind == ProtocolSchemaKind.finder) {
+      _validateFinderSemantics(payload, schema.type, path, errors);
+    }
     return schema;
+  }
+
+  void _validateFinderSemantics(
+    Map<String, dynamic> payload,
+    String type,
+    String path,
+    List<String> errors,
+  ) {
+    switch (type) {
+      case 'ByMatchPosition':
+        if (payload['position'] == 'index' && !payload.containsKey('index')) {
+          errors.add('Missing required property: ${_path(path, 'index')}');
+        }
+        final index = payload['index'];
+        if (index is int && index < 0) {
+          errors.add(
+            'Invalid value for ${_path(path, 'index')}. '
+            'Expected: a non-negative integer. Received: $index',
+          );
+        }
+      case 'BySemanticsIdentifier':
+        final identifier = payload['identifier'];
+        if (identifier is String && identifier.trim().isEmpty) {
+          errors.add(
+            'Invalid value for ${_path(path, 'identifier')}. '
+            'Expected: a non-empty string.',
+          );
+        }
+    }
   }
 
   void _validateObject(

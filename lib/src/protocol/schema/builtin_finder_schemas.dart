@@ -4,8 +4,126 @@ import 'protocol_schema.dart';
 
 const List<FinderSchema> builtinFinderSchemas = [
   FinderSchema(
+    type: 'ByText',
+    description:
+        'Find widget text from Text, EditableText, or standalone RichText.',
+    properties: {
+      'finderType': PropertySchema(
+        name: 'finderType',
+        types: [SchemaValueType.string],
+        required: true,
+        constantValue: 'ByText',
+        hasConstantValue: true,
+      ),
+      'text': PropertySchema(
+        name: 'text',
+        types: [SchemaValueType.string],
+        required: true,
+      ),
+      'matchType': PropertySchema(
+        name: 'matchType',
+        types: [SchemaValueType.string],
+        enumValues: ['exact', 'contains', 'startsWith', 'endsWith', 'regex'],
+        description: 'Defaults to exact.',
+      ),
+      'ignoreCase': PropertySchema(
+        name: 'ignoreCase',
+        types: [SchemaValueType.boolean],
+        description: 'Defaults to false and applies to every match type.',
+      ),
+    },
+    example: {
+      'finderType': 'ByText',
+      'text': 'Order #',
+      'matchType': 'contains',
+      'ignoreCase': false,
+    },
+  ),
+  FinderSchema(
+    type: 'ByMatchPosition',
+    description: 'Select the first, last, or zero-based indexed match.',
+    group: ProtocolSchemaGroup.custom,
+    properties: {
+      'finderType': PropertySchema(
+        name: 'finderType',
+        types: [SchemaValueType.string],
+        required: true,
+        constantValue: 'ByMatchPosition',
+        hasConstantValue: true,
+      ),
+      'position': PropertySchema(
+        name: 'position',
+        types: [SchemaValueType.string],
+        required: true,
+        enumValues: ['first', 'index', 'last'],
+      ),
+      'index': PropertySchema(
+        name: 'index',
+        types: [SchemaValueType.integer],
+        description:
+            'Required for position "index"; zero-based and must not be negative.',
+      ),
+      'of': PropertySchema(
+        name: 'of',
+        types: [SchemaValueType.object],
+        required: true,
+        reference: SchemaReference.finder,
+      ),
+    },
+    example: {
+      'finderType': 'ByMatchPosition',
+      'position': 'index',
+      'index': 2,
+      'of': {'finderType': 'ByType', 'type': 'OrderCard'},
+    },
+  ),
+  FinderSchema(
+    type: 'BySemanticsIdentifier',
+    description:
+        'Find a widget by exact Semantics.identifier, not Semantics.label.',
+    group: ProtocolSchemaGroup.custom,
+    properties: {
+      'finderType': PropertySchema(
+        name: 'finderType',
+        types: [SchemaValueType.string],
+        required: true,
+        constantValue: 'BySemanticsIdentifier',
+        hasConstantValue: true,
+      ),
+      'identifier': PropertySchema(
+        name: 'identifier',
+        types: [SchemaValueType.string],
+        required: true,
+        description: 'Required and must not be empty.',
+      ),
+    },
+    example: {
+      'finderType': 'BySemanticsIdentifier',
+      'identifier': 'checkout.submit',
+    },
+  ),
+  FinderSchema(
+    type: 'ByType',
+    description: 'Find widget by its runtime type name.',
+    properties: {
+      'finderType': PropertySchema(
+        name: 'finderType',
+        types: [SchemaValueType.string],
+        required: true,
+        constantValue: 'ByType',
+        hasConstantValue: true,
+      ),
+      'type': PropertySchema(
+        name: 'type',
+        types: [SchemaValueType.string],
+        required: true,
+      ),
+    },
+    example: {'finderType': 'ByType', 'type': 'ElevatedButton'},
+  ),
+  FinderSchema(
     type: 'ByValueKey',
-    description: 'Find widget by ValueKey.',
+    description: 'Find widget by ValueKey. Supports escaped glob patterns.',
     properties: {
       'finderType': PropertySchema(
         name: 'finderType',
@@ -31,81 +149,6 @@ const List<FinderSchema> builtinFinderSchemas = [
       'keyValueString': 'login_button',
       'keyValueType': 'String',
     },
-  ),
-  FinderSchema(
-    type: 'ByText',
-    description: 'Find widget by its visible text.',
-    properties: {
-      'finderType': PropertySchema(
-        name: 'finderType',
-        types: [SchemaValueType.string],
-        required: true,
-        constantValue: 'ByText',
-        hasConstantValue: true,
-      ),
-      'text': PropertySchema(
-        name: 'text',
-        types: [SchemaValueType.string],
-        required: true,
-      ),
-    },
-    example: {'finderType': 'ByText', 'text': 'Login'},
-  ),
-  FinderSchema(
-    type: 'ByTextMatch',
-    description:
-        'Find widget by text using contains, startsWith, endsWith, or regex.',
-    group: ProtocolSchemaGroup.custom,
-    properties: {
-      'finderType': PropertySchema(
-        name: 'finderType',
-        types: [SchemaValueType.string],
-        required: true,
-        constantValue: 'ByTextMatch',
-        hasConstantValue: true,
-      ),
-      'text': PropertySchema(
-        name: 'text',
-        types: [SchemaValueType.string],
-        required: true,
-      ),
-      'matchType': PropertySchema(
-        name: 'matchType',
-        types: [SchemaValueType.string],
-        required: true,
-        enumValues: ['contains', 'startsWith', 'endsWith', 'regex'],
-      ),
-      'ignoreCase': PropertySchema(
-        name: 'ignoreCase',
-        types: [SchemaValueType.boolean],
-        description: 'Whether matching ignores case. Defaults to false.',
-      ),
-    },
-    example: {
-      'finderType': 'ByTextMatch',
-      'text': 'Order #',
-      'matchType': 'contains',
-      'ignoreCase': false,
-    },
-  ),
-  FinderSchema(
-    type: 'ByType',
-    description: 'Find widget by its runtime type name.',
-    properties: {
-      'finderType': PropertySchema(
-        name: 'finderType',
-        types: [SchemaValueType.string],
-        required: true,
-        constantValue: 'ByType',
-        hasConstantValue: true,
-      ),
-      'type': PropertySchema(
-        name: 'type',
-        types: [SchemaValueType.string],
-        required: true,
-      ),
-    },
-    example: {'finderType': 'ByType', 'type': 'ElevatedButton'},
   ),
   FinderSchema(
     type: 'ByTooltip',
@@ -170,31 +213,6 @@ const List<FinderSchema> builtinFinderSchemas = [
       'finderType': 'BySemanticsLabel',
       'label': 'Log in',
       'isRegExp': false,
-    },
-  ),
-  FinderSchema(
-    type: 'BySemanticsIdentifier',
-    description:
-        'Find a widget by exact Semantics.identifier, not Semantics.label.',
-    group: ProtocolSchemaGroup.custom,
-    properties: {
-      'finderType': PropertySchema(
-        name: 'finderType',
-        types: [SchemaValueType.string],
-        required: true,
-        constantValue: 'BySemanticsIdentifier',
-        hasConstantValue: true,
-      ),
-      'identifier': PropertySchema(
-        name: 'identifier',
-        types: [SchemaValueType.string],
-        required: true,
-        description: 'Required and must not be empty.',
-      ),
-    },
-    example: {
-      'finderType': 'BySemanticsIdentifier',
-      'identifier': 'checkout.submit',
     },
   ),
   FinderSchema(
@@ -275,44 +293,6 @@ const List<FinderSchema> builtinFinderSchemas = [
       'matching': {'finderType': 'ByText', 'text': 'Settings'},
       'matchRoot': false,
       'firstMatchOnly': true,
-    },
-  ),
-  FinderSchema(
-    type: 'ByMatchPosition',
-    description: 'Select the first, last, or zero-based indexed match.',
-    group: ProtocolSchemaGroup.custom,
-    properties: {
-      'finderType': PropertySchema(
-        name: 'finderType',
-        types: [SchemaValueType.string],
-        required: true,
-        constantValue: 'ByMatchPosition',
-        hasConstantValue: true,
-      ),
-      'position': PropertySchema(
-        name: 'position',
-        types: [SchemaValueType.string],
-        required: true,
-        enumValues: ['first', 'index', 'last'],
-      ),
-      'index': PropertySchema(
-        name: 'index',
-        types: [SchemaValueType.integer],
-        description:
-            'Required for position "index"; zero-based and must not be negative.',
-      ),
-      'of': PropertySchema(
-        name: 'of',
-        types: [SchemaValueType.object],
-        required: true,
-        reference: SchemaReference.finder,
-      ),
-    },
-    example: {
-      'finderType': 'ByMatchPosition',
-      'position': 'index',
-      'index': 2,
-      'of': {'finderType': 'ByType', 'type': 'OrderCard'},
     },
   ),
   FinderSchema(

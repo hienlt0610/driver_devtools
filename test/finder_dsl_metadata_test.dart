@@ -6,17 +6,17 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('catalogs every built-in root and chain exactly once', () {
-    expect(FinderDslMetadataRegistry.roots, hasLength(9));
+    expect(FinderDslMetadataRegistry.roots, hasLength(8));
     expect(FinderDslMetadataRegistry.chains, hasLength(6));
     expect(
       FinderDslMetadataRegistry.all.map((definition) => definition.name),
-      hasLength(15),
+      hasLength(14),
     );
     expect(
       FinderDslMetadataRegistry.all
           .map((definition) => definition.name)
           .toSet(),
-      hasLength(15),
+      hasLength(14),
     );
     for (final definition in FinderDslMetadataRegistry.all) {
       expect(

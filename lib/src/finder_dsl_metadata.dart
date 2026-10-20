@@ -13,7 +13,6 @@ enum FinderDslMappingKind {
   byType,
   valueKey,
   byText,
-  textMatch,
   semanticsLabel,
   semanticsIdentifier,
   tooltipMessage,
@@ -149,24 +148,13 @@ class FinderDslMetadataRegistry {
           name: 'value',
           kind: FinderDslArgumentKind.string,
         ),
-      ],
-      signature: 'text(value: String)',
-      description: 'Match widgets by exact text.',
-    ),
-    FinderDslDefinition(
-      name: 'textMatch',
-      memberKind: FinderDslMemberKind.root,
-      finderType: 'ByTextMatch',
-      mapping: FinderDslMappingKind.textMatch,
-      arguments: [
-        FinderDslArgumentMetadata(
-          name: 'text',
-          kind: FinderDslArgumentKind.string,
-        ),
         FinderDslArgumentMetadata(
           name: 'matchType',
           kind: FinderDslArgumentKind.enumValue,
-          enumValues: ['contains', 'startsWith', 'endsWith', 'regex'],
+          required: false,
+          enumValues: ['exact', 'contains', 'startsWith', 'endsWith', 'regex'],
+          defaultValue: 'exact',
+          hasDefaultValue: true,
         ),
         FinderDslArgumentMetadata(
           name: 'ignoreCase',
@@ -176,7 +164,7 @@ class FinderDslMetadataRegistry {
           hasDefaultValue: true,
         ),
       ],
-      signature: 'textMatch(text, matchType, ignoreCase?)',
+      signature: 'text(value: String, matchType?, ignoreCase?)',
       description: 'Match widget text with a supported match strategy.',
     ),
     FinderDslDefinition(

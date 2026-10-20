@@ -16,7 +16,7 @@ void main() {
           'of': {'finderType': 'ByType', 'type': 'Column'},
         },
         'matching': {
-          'finderType': 'ByTextMatch',
+          'finderType': 'ByText',
           'text': 'Order #',
           'matchType': 'contains',
           'ignoreCase': false,
@@ -34,7 +34,7 @@ void main() {
           'of': {'finderType': 'ByType', 'type': 'Column'},
         },
         'matching': {
-          'finderType': 'ByTextMatch',
+          'finderType': 'ByText',
           'text': 'Order #',
           'matchType': 'contains',
           'ignoreCase': false,
@@ -50,7 +50,7 @@ void main() {
             '"index":"2","of":"{\\"finderType\\":\\"ByType\\",'
             '\\"type\\":\\"Column\\"}"}',
         'matching':
-            '{"finderType":"ByTextMatch","text":"Order #",'
+            '{"finderType":"ByText","text":"Order #",'
             '"matchType":"contains","ignoreCase":"false"}',
         'matchRoot': 'false',
         'firstMatchOnly': 'true',

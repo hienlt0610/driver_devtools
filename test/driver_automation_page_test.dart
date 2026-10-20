@@ -1151,6 +1151,9 @@ void main() {
     await tester.tap(
       find.byKey(const ValueKey('driver_automation.schema_item_ByText')),
     );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('driver_automation.schema_use_example_button')),
+    );
     await tester.tap(
       find.byKey(const ValueKey('driver_automation.schema_use_example_button')),
     );
@@ -1171,7 +1174,12 @@ void main() {
 
     expect(
       finderEditor.controller!.text,
-      '{\n  "finderType": "ByText",\n  "text": "Login"\n}',
+      '{\n'
+      '  "finderType": "ByText",\n'
+      '  "text": "Order #",\n'
+      '  "matchType": "contains",\n'
+      '  "ignoreCase": false\n'
+      '}',
     );
   });
 
@@ -1248,8 +1256,15 @@ void main() {
     expect(find.text('Built-in'), findsOneWidget);
     expect(find.text('Custom'), findsOneWidget);
     expect(find.text('ByValueKey'), findsWidgets);
-    expect(find.text('ByTextMatch'), findsOneWidget);
-    expect(find.text('Find widget by ValueKey.'), findsOneWidget);
+    expect(find.text('ByTextMatch'), findsNothing);
+    expect(find.text('ByText'), findsWidgets);
+    final valueKeySchema = find.byKey(
+      const ValueKey('driver_automation.schema_item_ByValueKey'),
+    );
+    await tester.ensureVisible(valueKeySchema);
+    await tester.tap(valueKeySchema);
+    await tester.pump();
+    expect(find.textContaining('Find widget by ValueKey.'), findsOneWidget);
     expect(find.textContaining('login_button'), findsNWidgets(2));
     expect(editor.controller!.text, initialText);
   });
@@ -1309,13 +1324,24 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('driver_automation.schema_use_example_button')),
+    );
     await tester.tap(
       find.byKey(const ValueKey('driver_automation.schema_use_example_button')),
     );
     await tester.pumpAndSettle();
 
     expect(find.text('Finder Schemas'), findsNothing);
-    expect(editor.controller!.text, JsonPayloads.defaultFinder);
+    expect(
+      editor.controller!.text,
+      '{\n'
+      '  "finderType": "ByText",\n'
+      '  "text": "Order #",\n'
+      '  "matchType": "contains",\n'
+      '  "ignoreCase": false\n'
+      '}',
+    );
     expect(clipboardWrites, 0);
   });
 

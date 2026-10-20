@@ -58,7 +58,7 @@ void main() {
     test('normalizes booleans inside nested descendant finders', () {
       final request = JsonPayloads.finderVerification(
         '{"finderType":"Descendant","of":{"finderType":"ByType","type":"Column"},'
-        '"matching":{"finderType":"ByTextMatch","text":"Order #",'
+        '"matching":{"finderType":"ByText","text":"Order #",'
         '"matchType":"contains","ignoreCase":false},'
         '"matchRoot":false,"firstMatchOnly":true}',
       );
@@ -68,7 +68,7 @@ void main() {
         'finderType': 'Descendant',
         'of': '{"finderType":"ByType","type":"Column"}',
         'matching':
-            '{"finderType":"ByTextMatch","text":"Order #",'
+            '{"finderType":"ByText","text":"Order #",'
             '"matchType":"contains","ignoreCase":"false"}',
         'matchRoot': 'false',
         'firstMatchOnly': 'true',

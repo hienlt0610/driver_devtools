@@ -27,7 +27,7 @@ void main() {
     test('preserves native booleans and integers in canonical JSON', () {
       final canonical = FinderDslCodec.toCanonical(
         FinderDslParser.parse(
-          'textMatch("Order #", regex, true).descendant('
+          'text("Order #", regex, true).descendant('
           'type("Row"), true, false).at(2)',
         ),
       );
@@ -37,8 +37,35 @@ void main() {
       final descendant = canonical['of'] as Map<String, dynamic>;
       expect(descendant['matchRoot'], isTrue);
       expect(descendant['firstMatchOnly'], isFalse);
-      final textMatch = descendant['of'] as Map<String, dynamic>;
-      expect(textMatch['ignoreCase'], isTrue);
+      final text = descendant['of'] as Map<String, dynamic>;
+      expect(text['finderType'], 'ByText');
+      expect(text['ignoreCase'], isTrue);
+    });
+
+    test('uses ByText for exact and non-exact matching modes', () {
+      expect(
+        FinderDslCodec.toCanonical(FinderDslParser.parse('text("Order")')),
+        {'finderType': 'ByText', 'text': 'Order'},
+      );
+      expect(
+        FinderDslCodec.toCanonical(
+          FinderDslParser.parse('text("Order", exact, true)'),
+        ),
+        {
+          'finderType': 'ByText',
+          'text': 'Order',
+          'matchType': 'exact',
+          'ignoreCase': true,
+        },
+      );
+      expect(
+        FinderDslGenerator.generateCanonical({
+          'finderType': 'ByText',
+          'text': 'Order',
+          'ignoreCase': true,
+        }),
+        'text("Order", exact, true)',
+      );
     });
 
     test('supports all root finder mappings', () {

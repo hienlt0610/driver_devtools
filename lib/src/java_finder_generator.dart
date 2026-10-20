@@ -24,11 +24,7 @@ class JavaFinderGenerator {
       case 'ByValueKey':
         return _renderByValueKey(finder, path);
       case 'ByText':
-        return _renderCall('byText', [
-          _stringLiteral(_requiredString(finder, 'text', path)),
-        ]);
-      case 'ByTextMatch':
-        return _renderByTextMatch(finder, path);
+        return _renderByText(finder, path);
       case 'ByType':
         return _renderCall('byType', [
           _stringLiteral(_requiredString(finder, 'type', path)),
@@ -45,8 +41,15 @@ class JavaFinderGenerator {
       case 'BySemanticsLabel':
         return _renderSemanticsLabel(finder, path);
       case 'BySemanticsIdentifier':
+        final identifier = _requiredString(finder, 'identifier', path);
+        if (identifier.trim().isEmpty) {
+          throw _error(
+            _propertyPath(path, 'identifier'),
+            'A non-empty string is required.',
+          );
+        }
         return _renderCall('bySemanticsIdentifier', [
-          _stringLiteral(_requiredString(finder, 'identifier', path)),
+          _stringLiteral(identifier),
         ]);
       case 'Ancestor':
         return _renderRelation(finder, path, method: 'ancestor');
@@ -89,8 +92,23 @@ class JavaFinderGenerator {
     return _renderCall('byKey', [_stringLiteral(value)]);
   }
 
-  static String _renderByTextMatch(Map<String, dynamic> finder, String path) {
-    final matchType = _requiredString(finder, 'matchType', path);
+  static String _renderByText(Map<String, dynamic> finder, String path) {
+    final text = _stringLiteral(_requiredString(finder, 'text', path));
+    final matchTypeValue = finder['matchType'];
+    if (matchTypeValue != null && matchTypeValue is! String) {
+      throw _error(_propertyPath(path, 'matchType'), 'A string is required.');
+    }
+    final matchType = matchTypeValue as String? ?? 'exact';
+    final ignoreCase = _optionalBool(finder, 'ignoreCase', path) ?? false;
+    if (matchType == 'exact') {
+      if (ignoreCase) {
+        throw _error(
+          _propertyPath(path, 'ignoreCase'),
+          'Java generation cannot represent exact matching with ignoreCase.',
+        );
+      }
+      return _renderCall('byText', [text]);
+    }
     final enumValue = switch (matchType) {
       'contains' => 'CONTAINS',
       'startsWith' => 'STARTS_WITH',
@@ -102,12 +120,8 @@ class JavaFinderGenerator {
           'Unsupported match type "$matchType".',
         ),
     };
-    final arguments = <String>[
-      _stringLiteral(_requiredString(finder, 'text', path)),
-      'Flutter.TextMatchType.$enumValue',
-    ];
-    final ignoreCase = _optionalBool(finder, 'ignoreCase', path);
-    if (ignoreCase == true) {
+    final arguments = <String>[text, 'Flutter.TextMatchType.$enumValue'];
+    if (ignoreCase) {
       arguments.add('true');
     }
     return _renderCall('byTextMatch', arguments);

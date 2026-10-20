@@ -13,11 +13,21 @@ void main() {
       registry = ProtocolSchemaRegistry.withBuiltIns();
     });
 
+    test('registers the contract finder extensions in order', () {
+      expect(registry.finderSchemas.take(5).map((schema) => schema.type), [
+        'ByText',
+        'ByMatchPosition',
+        'BySemanticsIdentifier',
+        'ByType',
+        'ByValueKey',
+      ]);
+    });
+
     test('exposes the built-in ByValueKey schema as documentation', () {
       final schema = registry.findFinder('ByValueKey');
 
       expect(schema, isNotNull);
-      expect(schema!.description, 'Find widget by ValueKey.');
+      expect(schema!.description, contains('Find widget by ValueKey.'));
       expect(schema.properties['finderType']!.required, isTrue);
       expect(schema.properties['finderType']!.constantValue, 'ByValueKey');
       expect(schema.properties['keyValueString']!.types, [
@@ -83,15 +93,16 @@ void main() {
       expect(constantResult.isValid, isTrue);
     });
 
-    test('exposes the ByTextMatch schema with its match strategies', () {
-      final schema = registry.findFinder('ByTextMatch');
+    test('exposes the ByText schema with its match strategies', () {
+      final schema = registry.findFinder('ByText');
 
       expect(schema, isNotNull);
-      expect(schema!.group, ProtocolSchemaGroup.custom);
-      expect(schema.properties['finderType']!.constantValue, 'ByTextMatch');
+      expect(schema!.group, ProtocolSchemaGroup.builtIn);
+      expect(schema.properties['finderType']!.constantValue, 'ByText');
       expect(schema.properties['text']!.required, isTrue);
-      expect(schema.properties['matchType']!.required, isTrue);
+      expect(schema.properties['matchType']!.required, isFalse);
       expect(schema.properties['matchType']!.enumValues, [
+        'exact',
         'contains',
         'startsWith',
         'endsWith',
@@ -100,7 +111,7 @@ void main() {
       expect(schema.properties['ignoreCase']!.types, [SchemaValueType.boolean]);
       expect(schema.properties['ignoreCase']!.required, isFalse);
       expect(schema.example, {
-        'finderType': 'ByTextMatch',
+        'finderType': 'ByText',
         'text': 'Order #',
         'matchType': 'contains',
         'ignoreCase': false,
@@ -108,12 +119,53 @@ void main() {
 
       expect(
         registry.validateFinderPayload({
-          'finderType': 'ByTextMatch',
+          'finderType': 'ByText',
           'text': r'^Order #[0-9]+$',
           'matchType': 'regex',
           'ignoreCase': true,
         }).isValid,
         isTrue,
+      );
+      expect(
+        registry.validateFinderPayload({
+          'finderType': 'ByText',
+          'text': 'Order #',
+        }).isValid,
+        isTrue,
+      );
+      expect(registry.findFinder('ByTextMatch'), isNull);
+    });
+
+    test('validates conditional match position fields', () {
+      expect(
+        registry.validateFinderPayload({
+          'finderType': 'ByMatchPosition',
+          'position': 'index',
+          'of': {'finderType': 'ByType', 'type': 'OrderCard'},
+        }).errors,
+        contains('Missing required property: index'),
+      );
+      expect(
+        registry.validateFinderPayload({
+          'finderType': 'ByMatchPosition',
+          'position': 'index',
+          'index': -1,
+          'of': {'finderType': 'ByType', 'type': 'OrderCard'},
+        }).errors,
+        contains(startsWith('Invalid value for index.')),
+      );
+    });
+
+    test('rejects empty semantics identifiers', () {
+      final result = registry.validateFinderPayload({
+        'finderType': 'BySemanticsIdentifier',
+        'identifier': '  ',
+      });
+
+      expect(result.isValid, isFalse);
+      expect(
+        result.errors,
+        contains(startsWith('Invalid value for identifier.')),
       );
     });
 
