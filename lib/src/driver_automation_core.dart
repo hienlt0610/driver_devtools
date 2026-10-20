@@ -164,6 +164,22 @@ class JsonPayloads {
     );
   }
 
+  static DriverRequest elementExplorerFromInspector(
+    String inspectorValueId, {
+    Map<String, String> options = const <String, String>{},
+    String? rawInput,
+  }) {
+    return DriverRequest(
+      kind: DriverOperationKind.elementExplorer,
+      rawInput: rawInput ?? inspectorValueId,
+      args: <String, String>{
+        ...options,
+        'inspectorValueId': inspectorValueId,
+        'command': 'element_explorer',
+      },
+    );
+  }
+
   static String displayResponse(Object? response) {
     if (response == null) return '';
 

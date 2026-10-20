@@ -356,6 +356,42 @@ void main() {
     );
     expect(find.text('ObjectKey'), findsWidgets);
   });
+
+  testWidgets('focuses an externally selected Inspector node', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 720,
+            height: 600,
+            child: ElementExplorerViewer(
+              snapshot: _finderMetadataSnapshot(),
+              truncated: false,
+              returnedNodes: 7,
+              visitedNodes: 7,
+              displayMode: ElementExplorerDisplayMode.pruned,
+              focusRequest: const ElementExplorerFocusRequest(
+                inspectorValueId: 'inspector-object',
+                generation: 1,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final selected = find.byKey(const ValueKey('element_explorer.node.object'));
+    expect(selected, findsOneWidget);
+    expect(
+      tester
+          .widget<Material>(
+            find.ancestor(of: selected, matching: find.byType(Material)).first,
+          )
+          .color,
+      Theme.of(tester.element(selected)).colorScheme.primaryContainer,
+    );
+  });
 }
 
 ElementExplorerSnapshot _deepSnapshot(int depth) {
@@ -439,6 +475,7 @@ ElementExplorerSnapshot _finderMetadataSnapshot() {
     parentId: 'root',
     widgetType: 'ObjectKeyWidget',
     elementType: 'StatelessElement',
+    inspectorValueId: 'inspector-object',
     key: <String, dynamic>{
       'kind': 'ObjectKey',
       'keyRuntimeType': 'ObjectKey',

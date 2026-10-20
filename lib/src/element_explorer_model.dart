@@ -129,6 +129,19 @@ class ElementExplorerSnapshot {
   const ElementExplorerSnapshot({required this.root});
 
   final ElementExplorerNode root;
+
+  ElementExplorerNode? findByInspectorValueId(String valueId) {
+    ElementExplorerNode? visit(ElementExplorerNode node) {
+      if (node.inspectorValueId == valueId) return node;
+      for (final child in node.children) {
+        final result = visit(child);
+        if (result != null) return result;
+      }
+      return null;
+    }
+
+    return visit(root);
+  }
 }
 
 class ElementExplorerCollection {
@@ -167,6 +180,7 @@ class ElementExplorerNode {
   const ElementExplorerNode({
     required this.nodeId,
     required this.parentId,
+    this.inspectorValueId,
     required this.widgetType,
     required this.elementType,
     required this.key,
@@ -180,6 +194,7 @@ class ElementExplorerNode {
 
   final String nodeId;
   final String? parentId;
+  final String? inspectorValueId;
   final String widgetType;
   final String elementType;
   final Map<String, dynamic>? key;
@@ -239,6 +254,7 @@ ElementExplorerNode _parseNode(
   return ElementExplorerNode(
     nodeId: nodeId,
     parentId: parentId,
+    inspectorValueId: _optionalString(payload, 'inspectorValueId'),
     widgetType: _requiredString(payload, 'widgetType'),
     elementType: _requiredString(payload, 'elementType'),
     key: _optionalMap(payload, 'key'),

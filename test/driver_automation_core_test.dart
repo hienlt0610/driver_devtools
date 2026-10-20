@@ -7,6 +7,25 @@ import 'package:devtools_app_shared/service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('builds an Element Explorer request from an Inspector value ID', () {
+    final request = JsonPayloads.elementExplorerFromInspector(
+      'inspector-7',
+      options: const <String, String>{
+        'ancestorDepth': '32',
+        'inspectorObjectGroup': 'driver_devtools_snapshot_1',
+      },
+    );
+
+    expect(request.kind, DriverOperationKind.elementExplorer);
+    expect(request.args, <String, String>{
+      'command': 'element_explorer',
+      'inspectorValueId': 'inspector-7',
+      'ancestorDepth': '32',
+      'inspectorObjectGroup': 'driver_devtools_snapshot_1',
+    });
+    expect(request.payload, isNull);
+  });
+
   group('JsonPayloads', () {
     test('formats valid JSON without changing its values', () {
       final formatted = JsonPayloads.format('{"command":"tap","enabled":true}');

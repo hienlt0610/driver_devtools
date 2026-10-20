@@ -14,6 +14,7 @@ import 'driver_automation_service.dart';
 import 'element_explorer_model.dart';
 import 'element_explorer_projection.dart';
 import 'element_explorer_widgets.dart';
+import 'inspector_selection_bridge.dart';
 import 'finder_dsl.dart';
 import 'finder_completion.dart';
 import 'finder_editor.dart';
@@ -119,6 +120,16 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
   late final TextEditingController _elementExplorerDescendantDepthEditor;
   late final TextEditingController _elementExplorerSiblingDepthEditor;
   late final TextEditingController _elementExplorerMaxNodesEditor;
+  InspectorSelectionBridge? _inspectorBridge;
+  ElementExplorerFocusRequest? _inspectorFocusRequest;
+  String? _inspectorSelectionValueId;
+  String? _inspectorStatus;
+  String? _pendingInspectorValueId;
+  String? _inspectorSnapshotAttemptedValueId;
+  int _pendingInspectorGeneration = 0;
+  int _inspectorSelectionGeneration = 0;
+  int _snapshotGroupSequence = 0;
+  String? _snapshotObjectGroup;
   bool _updatingFinderEditors = false;
 
   final _busyOperations = <DriverOperationKind>{};
@@ -248,11 +259,18 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     )..addListener(_onElementExplorerDraftChanged);
 
     if (_service case final service?) {
+      _inspectorBridge = InspectorSelectionBridge(
+        service.serviceManager,
+        onSelection: _onInspectorSelection,
+        onError: _onInspectorBridgeError,
+      );
       addAutoDisposeListener(
         service.connectionChanges,
         _onDevToolsConnectionChanged,
       );
       addAutoDisposeListener(service.isolateChanges, _onMainIsolateChanged);
+      _inspectorBridge!.setActive(_session.selectedTabIndex == 3);
+      unawaited(_inspectorBridge!.refreshConnection());
     }
     unawaited(_controller.connect());
   }
@@ -275,6 +293,10 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     _elementExplorerDescendantDepthEditor.dispose();
     _elementExplorerSiblingDepthEditor.dispose();
     _elementExplorerMaxNodesEditor.dispose();
+    if (_snapshotObjectGroup != null) {
+      unawaited(_inspectorBridge?.disposeObjectGroup(_snapshotObjectGroup!));
+    }
+    _inspectorBridge?.close();
     super.dispose();
   }
 
@@ -419,11 +441,13 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
 
   void _onDevToolsConnectionChanged() {
     if (!mounted) return;
+    unawaited(_inspectorBridge?.refreshConnection());
     unawaited(_controller.reconnect());
   }
 
   void _onMainIsolateChanged() {
     if (!mounted || !(_service?.isConnected ?? false)) return;
+    unawaited(_inspectorBridge?.refreshConnection());
     unawaited(_controller.reconnect());
   }
 
@@ -539,6 +563,192 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     return options;
   }
 
+  Map<String, String> _inspectorSnapshotOptions() {
+    final options = _elementExplorerOptions();
+    if (options != null) return options;
+    return <String, String>{
+      'ancestorDepth': '32',
+      'descendantDepth': '1',
+      'includeSiblings': 'true',
+      'siblingDepth': '0',
+      'maxNodes': '500',
+      'mode': _session.elementExplorerTraversalMode,
+      'maxAncestorDepth': '256',
+      'maxContextNodes': '200',
+      'maxVisitedNodes': '1000',
+      'maxReturnedNodes': '500',
+    };
+  }
+
+  String _newSnapshotObjectGroup() {
+    _snapshotGroupSequence += 1;
+    return 'driver_devtools_snapshot_$_snapshotGroupSequence';
+  }
+
+  void _disposeSnapshotObjectGroup(String group) {
+    unawaited(_inspectorBridge?.disposeObjectGroup(group));
+  }
+
+  void _applyElementExplorerResponse(
+    DriverExecutionResult result, {
+    required String appliedFinder,
+    required Map<String, String> appliedOptions,
+    required String snapshotGroup,
+    String? inspectorValueId,
+    int? inspectorGeneration,
+  }) {
+    if (inspectorGeneration != null &&
+        inspectorGeneration != _inspectorSelectionGeneration) {
+      _disposeSnapshotObjectGroup(snapshotGroup);
+      return;
+    }
+    _session.elementExplorerResult = result;
+    if (!result.success) {
+      _elementExplorerError =
+          result.error ?? 'Element Explorer request failed.';
+      if (inspectorValueId != null) {
+        _inspectorStatus = 'Unable to inspect the selected widget.';
+      }
+      _disposeSnapshotObjectGroup(snapshotGroup);
+      return;
+    }
+    try {
+      final parsed = ElementExplorerResponse.parse(result.response);
+      if (parsed.error != null) {
+        _elementExplorerError =
+            '${parsed.error!.code}: ${parsed.error!.message}';
+        if (inspectorValueId != null) {
+          _inspectorStatus = parsed.error!.message;
+        }
+        _disposeSnapshotObjectGroup(snapshotGroup);
+        return;
+      }
+      final snapshot = parsed.snapshot!;
+      final previousGroup = _snapshotObjectGroup;
+      _snapshotObjectGroup = snapshotGroup;
+      _elementExplorerError = null;
+      _session.elementExplorerSnapshot = snapshot;
+      _session.elementExplorerCollection = parsed.collection;
+      _session.elementExplorerReturnedNodes = parsed.returnedNodes;
+      _session.elementExplorerVisitedNodes = parsed.visitedNodes;
+      _session.elementExplorerTruncated = parsed.truncated;
+      _session.elementExplorerAppliedFinder = appliedFinder;
+      _session.elementExplorerAppliedOptions = Map<String, String>.from(
+        appliedOptions,
+      );
+      _session.elementExplorerEditorExpanded = false;
+      if (previousGroup != null && previousGroup != snapshotGroup) {
+        _disposeSnapshotObjectGroup(previousGroup);
+      }
+      if (inspectorValueId != null) {
+        if (snapshot.findByInspectorValueId(inspectorValueId) != null) {
+          _inspectorFocusRequest = ElementExplorerFocusRequest(
+            inspectorValueId: inspectorValueId,
+            generation: inspectorGeneration ?? _inspectorSelectionGeneration,
+          );
+          _inspectorStatus = null;
+        } else {
+          _inspectorFocusRequest = null;
+          _inspectorStatus =
+              'The runtime did not return Inspector identity for the selected widget.';
+        }
+      }
+    } on ElementExplorerResponseException catch (error) {
+      _elementExplorerError = 'INSPECTION_FAILED: $error';
+      if (inspectorValueId != null) {
+        _inspectorStatus = 'Invalid Element Explorer snapshot.';
+      }
+      _disposeSnapshotObjectGroup(snapshotGroup);
+    }
+  }
+
+  void _onInspectorBridgeError(Object error) {
+    if (!mounted) return;
+    setState(() => _inspectorStatus = 'Flutter Inspector unavailable: $error');
+  }
+
+  void _onInspectorSelection(String? valueId) {
+    if (!mounted) return;
+    final generation = ++_inspectorSelectionGeneration;
+    final sameSelection = _inspectorSelectionValueId == valueId;
+    _inspectorSelectionValueId = valueId;
+    _pendingInspectorValueId = null;
+    if (valueId == null) {
+      setState(() {
+        _inspectorFocusRequest = null;
+        _inspectorStatus = null;
+      });
+      return;
+    }
+
+    final currentSnapshot = _session.elementExplorerSnapshot;
+    final currentNode = currentSnapshot?.findByInspectorValueId(valueId);
+    if (currentNode != null) {
+      setState(() {
+        _inspectorFocusRequest = ElementExplorerFocusRequest(
+          inspectorValueId: currentNode.inspectorValueId!,
+          generation: generation,
+        );
+        _inspectorStatus = null;
+      });
+      return;
+    }
+
+    if (sameSelection &&
+        _inspectorSnapshotAttemptedValueId == valueId &&
+        !_busyOperations.contains(DriverOperationKind.elementExplorer)) {
+      return;
+    }
+
+    if (_busyOperations.contains(DriverOperationKind.elementExplorer)) {
+      _pendingInspectorValueId = valueId;
+      _pendingInspectorGeneration = generation;
+      setState(() => _inspectorStatus = 'Waiting for Element Explorer...');
+      return;
+    }
+    _inspectorSnapshotAttemptedValueId = valueId;
+    setState(() => _inspectorStatus = 'Resolving Inspector selection...');
+    unawaited(_inspectInspectorSelection(valueId, generation));
+  }
+
+  Future<void> _inspectInspectorSelection(
+    String valueId,
+    int generation,
+  ) async {
+    if (generation != _inspectorSelectionGeneration) return;
+    final options = _inspectorSnapshotOptions();
+    final snapshotGroup = _newSnapshotObjectGroup();
+    final request = JsonPayloads.elementExplorerFromInspector(
+      valueId,
+      options: <String, String>{
+        ...options,
+        'inspectorObjectGroup': snapshotGroup,
+      },
+    );
+    await _execute(
+      request,
+      onResult:
+          (result) => _applyElementExplorerResponse(
+            result,
+            appliedFinder: _elementExplorerFinderDraftKey() ?? '',
+            appliedOptions: options,
+            snapshotGroup: snapshotGroup,
+            inspectorValueId: valueId,
+            inspectorGeneration: generation,
+          ),
+    );
+    await _drainInspectorSelection();
+  }
+
+  Future<void> _drainInspectorSelection() async {
+    if (_busyOperations.contains(DriverOperationKind.elementExplorer)) return;
+    final valueId = _pendingInspectorValueId;
+    if (valueId == null) return;
+    final generation = _pendingInspectorGeneration;
+    _pendingInspectorValueId = null;
+    await _inspectInspectorSelection(valueId, generation);
+  }
+
   Map<String, String> _elementExplorerOptionsDraft() {
     final maxNodes = _elementExplorerMaxNodesEditor.text;
     return <String, String>{
@@ -621,9 +831,13 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
       return;
     }
 
+    final snapshotGroup = _newSnapshotObjectGroup();
     final request = JsonPayloads.elementExplorerFromCanonical(
       finder,
-      options: options,
+      options: <String, String>{
+        ...options,
+        'inspectorObjectGroup': snapshotGroup,
+      },
       rawInput: _elementExplorerFinderEditor.text,
     );
     setState(() {
@@ -636,37 +850,15 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
     });
     await _execute(
       request,
-      onResult: (result) {
-        _session.elementExplorerResult = result;
-        if (!result.success) {
-          _elementExplorerError =
-              result.error ?? 'Element Explorer request failed.';
-          return;
-        }
-        try {
-          final parsed = ElementExplorerResponse.parse(result.response);
-          if (parsed.error != null) {
-            _elementExplorerError =
-                '${parsed.error!.code}: ${parsed.error!.message}';
-          } else {
-            _elementExplorerError = null;
-            _session.elementExplorerSnapshot = parsed.snapshot;
-            _session.elementExplorerCollection = parsed.collection;
-            _session.elementExplorerReturnedNodes = parsed.returnedNodes;
-            _session.elementExplorerVisitedNodes = parsed.visitedNodes;
-            _session.elementExplorerTruncated = parsed.truncated;
-            _session.elementExplorerAppliedFinder =
-                const JsonEncoder.withIndent('  ').convert(finder);
-            _session.elementExplorerAppliedOptions = Map<String, String>.from(
-              options,
-            );
-            _session.elementExplorerEditorExpanded = false;
-          }
-        } on ElementExplorerResponseException catch (error) {
-          _elementExplorerError = 'INSPECTION_FAILED: $error';
-        }
-      },
+      onResult:
+          (result) => _applyElementExplorerResponse(
+            result,
+            appliedFinder: const JsonEncoder.withIndent('  ').convert(finder),
+            appliedOptions: options,
+            snapshotGroup: snapshotGroup,
+          ),
     );
+    await _drainInspectorSelection();
   }
 
   void _loadFinderIntoElementExplorer() {
@@ -1044,7 +1236,10 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
                         ],
                       ),
                       TabBar(
-                        onTap: (index) => _session.selectedTabIndex = index,
+                        onTap: (index) {
+                          _session.selectedTabIndex = index;
+                          _inspectorBridge?.setActive(index == 3);
+                        },
                         tabs: [
                           Tab(
                             key: ValueKey<String>(
@@ -1581,6 +1776,17 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
                       ),
                     ),
                   ),
+                if (_inspectorStatus != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      _inspectorStatus!,
+                      key: const ValueKey<String>(
+                        'driver_automation.element_explorer_inspector_status',
+                      ),
+                      style: Theme.of(context).subtleTextStyle,
+                    ),
+                  ),
                 if (optionsExpanded) ...[
                   const SizedBox(height: 6),
                   ElementExplorerOptionsEditor(
@@ -1619,6 +1825,7 @@ class _DriverAutomationPageState extends State<DriverAutomationPage>
                     visitedNodes: _session.elementExplorerVisitedNodes ?? 0,
                     collection: _session.elementExplorerCollection,
                     displayMode: _session.elementExplorerDisplayMode,
+                    focusRequest: _inspectorFocusRequest,
                   ),
                 ] else if (!isProcessing && _elementExplorerError == null)
                   Container(

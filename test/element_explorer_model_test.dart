@@ -30,6 +30,7 @@ void main() {
             'parentId': 'n0',
             'widgetType': 'Text',
             'elementType': 'StatelessElement',
+            'inspectorValueId': 'inspector-7',
             'key': null,
             'text': '10.500.000 VNĐ',
             'semanticsIdentifier': 'amount',
@@ -45,6 +46,10 @@ void main() {
     expect(result.snapshot, isNotNull);
     expect(result.snapshot!.root.children.single.parentId, 'n0');
     expect(result.snapshot!.root.children.single.isTarget, isTrue);
+    expect(
+      result.snapshot!.root.children.single.inspectorValueId,
+      'inspector-7',
+    );
     expect(result.snapshot!.root.key!['kind'], 'ValueKey');
     expect(
       () => result.snapshot!.root.key!['kind'] = 'ObjectKey',

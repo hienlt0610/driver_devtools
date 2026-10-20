@@ -131,6 +131,16 @@ class ElementExplorerOptionsEditor extends StatelessWidget {
   }
 }
 
+class ElementExplorerFocusRequest {
+  const ElementExplorerFocusRequest({
+    required this.inspectorValueId,
+    required this.generation,
+  });
+
+  final String inspectorValueId;
+  final int generation;
+}
+
 class ElementExplorerViewer extends StatefulWidget {
   const ElementExplorerViewer({
     super.key,
@@ -140,6 +150,7 @@ class ElementExplorerViewer extends StatefulWidget {
     this.visitedNodes = 0,
     this.collection,
     this.displayMode = ElementExplorerDisplayMode.raw,
+    this.focusRequest,
   });
 
   final ElementExplorerSnapshot snapshot;
@@ -148,6 +159,7 @@ class ElementExplorerViewer extends StatefulWidget {
   final int visitedNodes;
   final ElementExplorerCollection? collection;
   final ElementExplorerDisplayMode displayMode;
+  final ElementExplorerFocusRequest? focusRequest;
 
   @override
   State<ElementExplorerViewer> createState() => _ElementExplorerViewerState();
@@ -162,12 +174,14 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
   final _horizontalController = ScrollController();
   String? _selectedNodeId;
   final _revealedNodeIds = <String>{};
+  String? _lastFocusedInspectorNodeId;
 
   @override
   void initState() {
     super.initState();
     _resetSelection();
     _scheduleFocusTarget();
+    _scheduleExternalFocus();
   }
 
   @override
@@ -176,13 +190,20 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
     if (!identical(oldWidget.snapshot, widget.snapshot)) {
       _rowKeys.clear();
       _revealedNodeIds.clear();
+      _lastFocusedInspectorNodeId = null;
       _resetSelection();
       _scheduleFocusTarget();
+      _scheduleExternalFocus();
     } else if (oldWidget.displayMode != widget.displayMode &&
         widget.displayMode == ElementExplorerDisplayMode.pruned &&
         _selectedNodeId != null &&
         _projection.findByRawNodeId(_selectedNodeId!) == null) {
       _revealedNodeIds.add(_selectedNodeId!);
+    }
+    if (oldWidget.focusRequest?.generation != widget.focusRequest?.generation ||
+        oldWidget.focusRequest?.inspectorValueId !=
+            widget.focusRequest?.inspectorValueId) {
+      _scheduleExternalFocus();
     }
   }
 
@@ -263,6 +284,74 @@ class _ElementExplorerViewerState extends State<ElementExplorerViewer> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _focusTarget();
+    });
+  }
+
+  void _scheduleExternalFocus() {
+    final request = widget.focusRequest;
+    if (request == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || widget.focusRequest?.generation != request.generation) {
+        return;
+      }
+      _focusExternal(request);
+    });
+  }
+
+  List<String> _rawPathTo(String nodeId) {
+    final nodesById = <String, ElementExplorerNode>{};
+    void index(ElementExplorerNode node) {
+      nodesById[node.nodeId] = node;
+      for (final child in node.children) {
+        index(child);
+      }
+    }
+
+    index(widget.snapshot.root);
+    final path = <String>[];
+    String? current = nodeId;
+    while (current != null) {
+      path.insert(0, current);
+      current = nodesById[current]?.parentId;
+    }
+    return path;
+  }
+
+  void _focusExternal(ElementExplorerFocusRequest request) {
+    final node = widget.snapshot.findByInspectorValueId(
+      request.inspectorValueId,
+    );
+    if (node == null) return;
+    final path = _rawPathTo(node.nodeId);
+    final shouldScroll = _lastFocusedInspectorNodeId != node.nodeId;
+    _lastFocusedInspectorNodeId = node.nodeId;
+    final changed =
+        _selectedNodeId != node.nodeId ||
+        (widget.displayMode == ElementExplorerDisplayMode.pruned &&
+            !_revealedNodeIds.contains(node.nodeId)) ||
+        !_expandedNodeIds.containsAll(path.take(path.length - 1));
+    if (changed) {
+      setState(() {
+        _selectedNodeId = node.nodeId;
+        if (widget.displayMode == ElementExplorerDisplayMode.pruned) {
+          _revealedNodeIds.add(node.nodeId);
+        }
+        _expandedNodeIds.addAll(path.take(path.length - 1));
+      });
+    }
+    if (!shouldScroll) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final context = _rowKeys[node.nodeId]?.currentContext;
+      if (context == null) return;
+      unawaited(
+        Scrollable.ensureVisible(
+          context,
+          alignment: 0.5,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+        ),
+      );
     });
   }
 

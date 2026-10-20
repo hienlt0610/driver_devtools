@@ -4,6 +4,8 @@
 //   enableFlutterDriverExtension(
 //     commands: <CommandExtension>[ElementExplorerCommandExtension()],
 //   );
+// Flutter exposes Inspector identity methods as protected VM-inspector APIs.
+// ignore_for_file: invalid_use_of_protected_member
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -28,6 +30,8 @@ class ElementExplorerOptions {
     this.maxVisitedNodes = 1000,
     this.maxReturnedNodes = 500,
     this.usesV2 = false,
+    this.inspectorValueId,
+    this.inspectorObjectGroup,
   });
 
   static const int maxDepth = 32;
@@ -46,6 +50,8 @@ class ElementExplorerOptions {
   final int maxVisitedNodes;
   final int maxReturnedNodes;
   final bool usesV2;
+  final String? inspectorValueId;
+  final String? inspectorObjectGroup;
 
   factory ElementExplorerOptions.fromParams(Map<String, String> params) {
     final bool usesV2 = params.keys.any(
@@ -102,6 +108,14 @@ class ElementExplorerOptions {
       'maxReturnedNodes',
       defaultValue: maxNodes,
     );
+    final String? inspectorValueId = params['inspectorValueId'];
+    final String? inspectorObjectGroup = params['inspectorObjectGroup'];
+    if (inspectorValueId != null && inspectorValueId.isEmpty) {
+      throw FormatException('inspectorValueId must not be empty');
+    }
+    if (inspectorObjectGroup != null && inspectorObjectGroup.isEmpty) {
+      throw FormatException('inspectorObjectGroup must not be empty');
+    }
 
     for (final MapEntry<String, int> entry in <MapEntry<String, int>>[
       MapEntry<String, int>('ancestorDepth', ancestorDepth),
@@ -148,6 +162,8 @@ class ElementExplorerOptions {
       maxVisitedNodes: maxVisitedNodes,
       maxReturnedNodes: maxReturnedNodes,
       usesV2: usesV2,
+      inspectorValueId: inspectorValueId,
+      inspectorObjectGroup: inspectorObjectGroup,
     );
   }
 
@@ -167,6 +183,12 @@ class ElementExplorerOptions {
         'maxVisitedNodes': '$maxVisitedNodes',
         'maxReturnedNodes': '$maxReturnedNodes',
       });
+    }
+    if (inspectorValueId != null) {
+      params['inspectorValueId'] = inspectorValueId!;
+    }
+    if (inspectorObjectGroup != null) {
+      params['inspectorObjectGroup'] = inspectorObjectGroup!;
     }
     return params;
   }
@@ -229,10 +251,17 @@ class ElementExplorerCommand extends Command {
       argumentError = error.message;
     }
 
-    try {
-      finder = finderFactory.deserializeFinder(params);
-    } catch (error) {
-      argumentError ??= 'Invalid Finder: $error';
+    if (params['inspectorValueId'] != null) {
+      if (params.containsKey('finderType')) {
+        argumentError =
+            'A request cannot contain both a Finder and inspectorValueId';
+      }
+    } else {
+      try {
+        finder = finderFactory.deserializeFinder(params);
+      } catch (error) {
+        argumentError ??= 'Invalid Finder: $error';
+      }
     }
 
     ElementExplorerOptions options;
@@ -283,9 +312,9 @@ class ElementExplorerCommand extends Command {
   }
 }
 
-/// Flutter Driver command that snapshots the active Element hierarchy around
-/// exactly one Finder match without waiting, tapping, scrolling, or mutating
-/// application state.
+/// Flutter Driver command that snapshots a bounded Element hierarchy around
+/// either exactly one Finder match or an Inspector [Element] value ID without
+/// waiting, tapping, scrolling, or mutating application state.
 class ElementExplorerCommandExtension extends CommandExtension {
   @override
   String get commandKind => elementExplorerCommandKind;
@@ -312,53 +341,84 @@ class ElementExplorerCommandExtension extends CommandExtension {
         message: 'Unexpected command type for $elementExplorerCommandKind',
       );
     }
-    if (command.argumentError != null || command.finder == null) {
+    if (command.argumentError != null ||
+        (command.finder == null && command.options.inspectorValueId == null)) {
       return ElementExplorerResult.error(
         code: 'INVALID_ARGUMENT',
-        message: command.argumentError ?? 'A serialized Finder is required',
+        message:
+            command.argumentError ??
+            'A serialized Finder or Inspector valueId is required',
       );
     }
 
-    final Finder finder;
-    try {
-      finder = finderFactory.createFinder(command.finder!);
-    } catch (error) {
-      return ElementExplorerResult.error(
-        code: 'INVALID_ARGUMENT',
-        message: 'Finder is not supported by this Flutter runtime: $error',
-      );
+    final Element target;
+    if (command.options.inspectorValueId != null) {
+      try {
+        final Object? resolved = WidgetInspectorService.instance.toObject(
+          command.options.inspectorValueId,
+          command.options.inspectorObjectGroup,
+        );
+        if (resolved is! Element) {
+          return ElementExplorerResult.error(
+            code: 'INSPECTOR_ID_INVALID',
+            message: 'Inspector valueId does not refer to an Element',
+          );
+        }
+        target = resolved;
+      } catch (error) {
+        return ElementExplorerResult.error(
+          code: 'INSPECTOR_ID_INVALID',
+          message: 'Inspector valueId is unavailable: $error',
+        );
+      }
+    } else {
+      final Finder finder;
+      try {
+        finder = finderFactory.createFinder(command.finder!);
+      } catch (error) {
+        return ElementExplorerResult.error(
+          code: 'INVALID_ARGUMENT',
+          message: 'Finder is not supported by this Flutter runtime: $error',
+        );
+      }
+
+      final List<Element> matches;
+      try {
+        matches = finder.evaluate().toList(growable: false);
+      } catch (error) {
+        return ElementExplorerResult.error(
+          code: 'INSPECTION_FAILED',
+          message: 'Finder evaluation failed: $error',
+        );
+      }
+
+      if (matches.isEmpty) {
+        return ElementExplorerResult.error(
+          code: 'TARGET_NOT_FOUND',
+          message: 'The Finder did not match an Element',
+          matchCount: 0,
+        );
+      }
+      if (matches.length != 1) {
+        return ElementExplorerResult.error(
+          code: 'AMBIGUOUS_TARGET',
+          message: 'The Finder matched ${matches.length} Elements',
+          matchCount: matches.length,
+        );
+      }
+      target = matches.single;
     }
 
-    final List<Element> matches;
-    try {
-      matches = finder.evaluate().toList(growable: false);
-    } catch (error) {
-      return ElementExplorerResult.error(
-        code: 'INSPECTION_FAILED',
-        message: 'Finder evaluation failed: $error',
-      );
-    }
-
-    if (matches.isEmpty) {
-      return ElementExplorerResult.error(
-        code: 'TARGET_NOT_FOUND',
-        message: 'The Finder did not match an Element',
-        matchCount: 0,
-      );
-    }
-    if (matches.length != 1) {
-      return ElementExplorerResult.error(
-        code: 'AMBIGUOUS_TARGET',
-        message: 'The Finder matched ${matches.length} Elements',
-        matchCount: matches.length,
-      );
-    }
-
-    final Element target = matches.single;
     if (!target.mounted) {
       return ElementExplorerResult.error(
-        code: 'INSPECTION_FAILED',
-        message: 'The matched Element was unmounted before inspection',
+        code:
+            command.options.inspectorValueId == null
+                ? 'INSPECTION_FAILED'
+                : 'INSPECTOR_ID_INVALID',
+        message:
+            command.options.inspectorValueId == null
+                ? 'The matched Element was unmounted before inspection'
+                : 'The Inspector Element is no longer mounted',
         matchCount: 1,
       );
     }
@@ -598,6 +658,11 @@ class _ElementSnapshot {
     final Map<String, dynamic> node = <String, dynamic>{
       'nodeId': 'n$_returnedNodes',
       'parentId': parentId,
+      if (options.inspectorObjectGroup != null)
+        'inspectorValueId': WidgetInspectorService.instance.toId(
+          element,
+          options.inspectorObjectGroup!,
+        ),
       'widgetType': element.widget.runtimeType.toString(),
       'elementType': element.runtimeType.toString(),
       'key': null,

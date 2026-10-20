@@ -4,6 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:driver_devtools/src/runtime/element_explorer_command.dart';
 
+// The POC exercises the framework's protected Inspector identity surface.
+// ignore_for_file: invalid_use_of_protected_member
+
 void main() {
   final GlobalKey globalKey = GlobalKey(debugLabel: 'global');
   late FlutterDriverExtension driverExtension;
@@ -121,6 +124,41 @@ void main() {
       isNotEmpty,
     );
     semanticsHandle.dispose();
+  });
+
+  testWidgets('snapshots an Inspector-selected Element without a Finder', (
+    tester,
+  ) async {
+    await pumpFixture(tester);
+    final target = tester.element(find.text('10.500.000 VNĐ'));
+    final service = WidgetInspectorService.instance;
+    const group = 'driver_devtools_snapshot_test';
+    final inspectorValueId = service.toId(target, group)!;
+
+    final response = await inspect(<String, String>{
+      'inspectorValueId': inspectorValueId,
+      'inspectorObjectGroup': group,
+      'ancestorDepth': '2',
+      'descendantDepth': '0',
+      'maxNodes': '20',
+    });
+
+    final root = Map<String, dynamic>.from(response['root'] as Map);
+    final targetNode = findNode(root, (node) => node['isTarget'] == true);
+    expect(targetNode['text'], '10.500.000 VNĐ');
+    expect(targetNode['inspectorValueId'], inspectorValueId);
+    service.disposeGroup(group);
+  });
+
+  testWidgets('rejects an expired Inspector value ID', (tester) async {
+    await pumpFixture(tester);
+
+    final response = await inspect(<String, String>{
+      'inspectorValueId': 'inspector-expired',
+      'inspectorObjectGroup': 'driver_devtools_expired_test',
+    });
+
+    expect(response['error']['code'], 'INSPECTOR_ID_INVALID');
   });
 
   testWidgets('reports not found and ambiguous targets', (tester) async {
